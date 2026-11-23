@@ -205,6 +205,40 @@ def read_published(design):
         return None
 
 
+def read_data_only(design):
+    """{exchangeId: record} of the data-only exchanges read into this design (see doc_meta.build_data_only)."""
+    import json
+    attribute = design.rootComponent.attributes.itemByName(doc_meta.ATTR_GROUP, doc_meta.ATTR_DATA_ONLY)
+    if attribute is None:
+        return {}
+    try:
+        stored = json.loads(attribute.value)
+    except ValueError:
+        return {}
+    if not isinstance(stored, dict):
+        return {}
+    return {k: v for k, v in stored.items() if isinstance(v, dict) and isinstance(v.get('exchange'), dict)}
+
+
+def write_data_only(design, record):
+    stored = doc_meta.merge_data_only(read_data_only(design), record)
+    design.rootComponent.attributes.add(doc_meta.ATTR_GROUP, doc_meta.ATTR_DATA_ONLY, doc_meta.dumps(stored))
+
+
+def remove_data_only(design, exchange_id):
+    """Forget one data-only exchange. Returns True when it was stored."""
+    stored = read_data_only(design)
+    if exchange_id not in stored:
+        return False
+    del stored[exchange_id]
+    attribute = design.rootComponent.attributes.itemByName(doc_meta.ATTR_GROUP, doc_meta.ATTR_DATA_ONLY)
+    if stored:
+        design.rootComponent.attributes.add(doc_meta.ATTR_GROUP, doc_meta.ATTR_DATA_ONLY, doc_meta.dumps(stored))
+    elif attribute is not None:
+        attribute.deleteMe()
+    return True
+
+
 def write_published(design, metadata):
     design.rootComponent.attributes.add(doc_meta.ATTR_GROUP, doc_meta.ATTR_PUBLISHED, doc_meta.dumps(metadata))
 

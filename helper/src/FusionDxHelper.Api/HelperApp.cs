@@ -24,7 +24,8 @@ public static class HelperApp
 {
     public const string SecretEnvVar = "DXHELPER_SECRET";
 
-    public static WebApplication Build(IExchangeService service, string secret, string exportRoot, HelperLog log, int port = 0)
+    public static WebApplication Build(IExchangeService service, string secret, string exportRoot, HelperLog log, int port = 0,
+        ExportCache? cache = null)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
@@ -140,6 +141,10 @@ public static class HelperApp
             return Results.Ok(new { deleted = true });
         });
 
+        app.MapPost("/v1/exchanges/data", async (ResolveBody body, CancellationToken ct) =>
+            await service.GetDataOnlyElementsAsync(Need(body.HubId, "hubId"), Need(body.ProjectId, "projectId"),
+                Need(body.FileUrn, "fileUrn"), ct));
+
         app.MapPost("/v1/exchanges/changes", async (ChangesBody body, CancellationToken ct) =>
             await service.GetChangesAsync(Checked(body.Exchange), Need(body.FromRevisionId, "fromRevisionId"), ct));
 
@@ -153,11 +158,19 @@ public static class HelperApp
             Directory.CreateDirectory(directory);
             try
             {
+                if (cache != null)
+                {
+                    // Same revision already downloaded in this session: reuse it instead of the cloud.
+                    var latest = await service.GetLatestRevisionAsync(exchange, ct);
+                    if (cache.TryRestore(exchange.ExchangeId, latest.RevisionId, mesh, directory) is { } reused)
+                        return reused;
+                }
                 var result = mesh
                     ? await service.ExportMeshAsync(exchange, directory, ct)
                     : await service.ExportAsync(exchange, directory, ct);
                 // Re-validate from disk: this is the last check before the add-in mutates Fusion.
                 ManifestIO.Validate(ManifestIO.Read(result.ManifestPath), directory);
+                cache?.Store(result, mesh);
                 return result;
             }
             catch

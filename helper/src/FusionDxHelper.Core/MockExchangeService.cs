@@ -259,6 +259,19 @@ public sealed class MockExchangeService : IExchangeService
     }
 
     /// <summary>The mock has no previews; the add-in shows its "no preview" state.</summary>
+    public Task<DataOnlyElements> GetDataOnlyElementsAsync(string hubId, string projectId, string fileUrn, CancellationToken ct)
+    {
+        Guard();
+        // Labelled fixture data, so the table can be tried without the cloud.
+        IReadOnlyList<DataElement> listed =
+        [
+            new("MOCK Level 1", "Levels", new() { ["Elevation"] = "0 mm" }),
+            new("MOCK Level 2", "Levels", new() { ["Elevation"] = "3600 mm" }),
+            new("MOCK Basic Wall", "Walls", new() { ["Length"] = "7200 mm", ["Fire Rating"] = "60 min" }),
+        ];
+        return Task.FromResult(new DataOnlyElements("MOCK data-only exchange", listed.Count, listed, "mock"));
+    }
+
     public Task DeleteExchangeAsync(string hubId, string projectId, string fileUrn, CancellationToken ct)
     {
         Guard();

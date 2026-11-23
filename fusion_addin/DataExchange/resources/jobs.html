@@ -164,7 +164,18 @@
       actions.appendChild(open);
     }
     var elementsRow = null;
-    if (role === 'Consumed') {
+    var listable = role === 'Consumed' || role === 'Data only';
+    if (role === 'Data only') {
+      var again = el('button', '', 'Read again');
+      again.title = 'Read the element data of this exchange from the cloud again.';
+      again.onclick = function () { send('rereadData', { key: item.key }); };
+      actions.appendChild(again);
+      var forget = el('button', '', 'Remove');
+      forget.title = 'Remove this data from the design. The exchange itself is not touched.';
+      forget.onclick = function () { send('removeData', { key: item.key }); };
+      actions.appendChild(forget);
+    }
+    if (listable) {
       var list = el('button', '', 'Elements');
       list.title = 'Show what this exchange contains: element names, categories and properties.';
       list.onclick = function () {
@@ -176,7 +187,7 @@
     row.appendChild(actions);
     body.appendChild(row);
 
-    if (role === 'Consumed') {
+    if (listable) {
       elementsRow = el('tr', 'elements');
       elementsRow.style.display = 'none';
       var holder = el('td');
@@ -244,7 +255,7 @@
       summaryEl.appendChild(el('div', 'empty', 'Open a design to see its exchanges.'));
       return;
     }
-    if (!state.consumed.length && !state.published) {
+    if (!state.consumed.length && !state.published && !(state.dataOnly || []).length) {
       summaryEl.appendChild(el('div', 'empty', 'This design does not consume or publish any exchange yet.'));
       return;
     }
@@ -259,6 +270,9 @@
     state.consumed.forEach(function (item) {
       item.shortStatus = SHORT[item.state] || item.statusText;
       exchangeRows(body, item, 'Consumed', 'When this revision was loaded', item.elements + ' elements, ' + item.bodies + ' bodies');
+    });
+    (state.dataOnly || []).forEach(function (item) {
+      exchangeRows(body, item, 'Data only', 'When this data was read from the cloud', item.elements + ' elements, no geometry');
     });
     if (state.published) {
       state.published.shortStatus = state.published.state === 'current' ? 'As published' : (SHORT[state.published.state] || state.published.statusText);

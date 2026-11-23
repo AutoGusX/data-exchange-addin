@@ -45,5 +45,9 @@ public interface IExchangeService
     /// <summary>Permanently deletes an exchange from its folder. The caller confirms with the user first.</summary>
     Task DeleteExchangeAsync(string hubId, string projectId, string fileUrn, CancellationToken ct);
 
+    /// <summary>Element data of a data-only (AEC Data Model based) exchange, read through the
+    /// AEC Data Model API. Read-only.</summary>
+    Task<DataOnlyElements> GetDataOnlyElementsAsync(string hubId, string projectId, string fileUrn, CancellationToken ct);
+
     Task<byte[]?> GetThumbnailAsync(string hubId, string projectId, string fileUrn, CancellationToken ct);
 }

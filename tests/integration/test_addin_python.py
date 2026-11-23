@@ -556,6 +556,66 @@ class HelperClientMockTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 'NOT_FOUND')
 
 
+    def test_data_only_elements_in_mock_mode_are_labelled(self):
+        data = self.client.data_only_elements('mock-hub', 'mock-project', 'urn:mock:file:anything')
+        self.assertEqual(data['source'], 'mock')
+        self.assertTrue(all(e['name'].startswith('MOCK') for e in data['listed']))
+        self.assertEqual(data['total'], len(data['listed']))
+
+
+class FormaLinkTests(unittest.TestCase):
+    LINK = ('https://acc.autodesk.com/docs/files/projects/0A1B2C3D-1111-2222-3333-444455556666'
+            '?folderUrn=urn%3Aadsk.wipprod%3Afs.folder%3Aco.folder1'
+            '&entityId=urn%3Aadsk.wipprod%3Adm.lineage%3Aitem1&viewModel=detail&moduleId=folders')
+
+    def test_reads_project_folder_and_item(self):
+        self.assertEqual(doc_meta.parse_forma_link('  ' + self.LINK + ' '), {
+            'projectId': 'b.0a1b2c3d-1111-2222-3333-444455556666',
+            'folderUrn': 'urn:adsk.wipprod:fs.folder:co.folder1',
+            'fileUrn': 'urn:adsk.wipprod:dm.lineage:item1'})
+
+    def test_round_trips_with_the_link_the_add_in_builds(self):
+        found = doc_meta.parse_forma_link(self.LINK)
+        self.assertEqual(doc_meta.parse_forma_link(doc_meta.docs_url(found)), found)
+
+    def test_links_use_the_host_of_the_hub_region(self):
+        found = doc_meta.parse_forma_link(self.LINK)
+        self.assertTrue(doc_meta.docs_url(dict(found, region='EMEA')).startswith('https://acc.autodesk.eu/docs/files/projects/'))
+        self.assertTrue(doc_meta.docs_url(dict(found, region='aus')).startswith('https://acc.aus.autodesk.com/'))
+        self.assertTrue(doc_meta.docs_url(dict(found, region='Mars')).startswith('https://acc.autodesk.com/'))
+        emea = doc_meta.docs_url(dict(found, region='EMEA'))
+        self.assertEqual(doc_meta.parse_forma_link(emea), found)
+        self.assertTrue(doc_meta.is_forma_link(emea))
+        self.assertFalse(doc_meta.is_forma_link('https://acc.autodesk.eu.evil.example/docs'))
+        self.assertFalse(doc_meta.is_forma_link(None))
+        self.assertEqual(doc_meta.slim_exchange(dict(EXCHANGE, region='EMEA'))['region'], 'EMEA')
+
+    def test_folder_links_and_other_text_are_told_apart(self):
+        folder = self.LINK.split('&entityId')[0]
+        self.assertIsNone(doc_meta.parse_forma_link(folder)['fileUrn'])
+        for text in ('', 'hello', 'http://acc.autodesk.com/docs/files/projects/0a1b2c3d-1111-2222-3333-444455556666',
+                     'https://evil.example/docs/files/projects/0a1b2c3d-1111-2222-3333-444455556666',
+                     'https://acc.autodesk.com/docs/files/projects/not-a-guid'):
+            self.assertIsNone(doc_meta.parse_forma_link(text), text)
+
+
+class LastFolderTests(unittest.TestCase):
+    def test_last_folder_survives_favorite_changes(self):
+        location = dict(FavoritesTests.LOCATION)
+        with tempfile.TemporaryDirectory() as folder:
+            path = favorites.file_path(folder)
+            self.assertIsNone(favorites.load_last(path))
+            exchange = dict(location, kind='exchange', path=list(location['path']) + ['Some exchange'])
+            saved = favorites.save_last(path, exchange)
+            self.assertEqual(saved['path'], list(location['path']))
+            favorites.add(path, location)
+            favorites.remove(path, location)
+            self.assertEqual(favorites.load_last(path), saved)
+            self.assertEqual(favorites.load(path), [])
+            self.assertIsNone(favorites.save_last(path, {'kind': 'hub'}))
+            self.assertEqual(favorites.load_last(path), saved)
+
+
 class DataOnlyTests(unittest.TestCase):
     def test_recognises_the_service_refusal_and_the_helper_code(self):
         self.assertTrue(data_only.is_error('DATA_ONLY_EXCHANGE', ''))
@@ -563,6 +623,23 @@ class DataOnlyTests(unittest.TestCase):
             'INTERNAL_ERROR', 'Could not get element data model: This API does not support AECDM based exchange.'))
         self.assertFalse(data_only.is_error('INTERNAL_ERROR', 'The request is invalid.'))
         self.assertFalse(data_only.is_error('NOT_FOUND', None))
+
+    def test_record_keeps_where_it_is_and_a_capped_element_list(self):
+        data = {'name': 'Levels', 'total': 500, 'source': 'aecdm', 'listed': [
+            {'name': 'Level 1', 'category': 'Levels', 'properties': {'Elevation': '0 mm', 'Empty': ''}}, 'junk']}
+        record = doc_meta.build_data_only(dict(EXCHANGE, region='EMEA'), data, 'hub-1', 'b.p', 'urn:x', now='2026-11-23T00:00:00Z')
+        self.assertEqual(record['exchangeId'], 'ex-1')
+        self.assertEqual(record['exchange']['region'], 'EMEA')
+        self.assertNotIn('extra', record['exchange'])
+        self.assertEqual(record['elements'], {'total': 500, 'listed': [
+            {'name': 'Level 1', 'category': 'Levels', 'properties': {'Elevation': '0 mm'}}]})
+        stored = {}
+        for index in range(doc_meta.MAX_DATA_ONLY + 2):
+            other = dict(record, exchangeId='ex-%d' % index, readAtUtc='2026-11-%02dT00:00:00Z' % (index + 1))
+            stored = doc_meta.merge_data_only(stored, other)
+        self.assertEqual(len(stored), doc_meta.MAX_DATA_ONLY)
+        self.assertNotIn('ex-0', stored)
+        self.assertIn('ex-%d' % (doc_meta.MAX_DATA_ONLY + 1), stored)
 
     def test_remembers_exchanges_per_file(self):
         with tempfile.TemporaryDirectory() as folder:

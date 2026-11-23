@@ -302,6 +302,11 @@ class HelperClient:
     def watch(self, exchange_ids):
         return self._request('POST', '/v1/events/watch', body={'exchangeIds': list(exchange_ids)}, timeout=30)
 
+    def data_only_elements(self, hub_id, project_id, file_urn):
+        """Element data of a data-only (AEC Data Model based) exchange: {'name', 'total', 'listed', 'source'}."""
+        return self._request('POST', '/v1/exchanges/data',
+                             body={'hubId': hub_id, 'projectId': project_id, 'fileUrn': file_urn}, timeout=300)
+
     def delete_exchange(self, hub_id, project_id, file_urn):
         """Permanently delete an exchange. Callers confirm with the user first."""
         return self._request('POST', '/v1/exchanges/delete', body={

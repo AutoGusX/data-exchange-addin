@@ -194,6 +194,13 @@ class Explorer:
     def path_text(self):
         return ' / '.join(self.selection.get('path') or [])
 
+    def remember(self):
+        """Keep the selected folder (or the folder of the selected exchange) as the place to reopen at."""
+        try:
+            favorites.save_last(_favorites_path(), self.selection)
+        except OSError:
+            pass  # only a convenience
+
     # ---- messages from the page ------------------------------------------------------------
 
     def _incoming(self, event):
@@ -210,6 +217,7 @@ class Explorer:
         if action == 'ready':
             event.returnData = json.dumps({'showExchanges': self.show_exchanges, 'dark': _is_dark_theme(),
                                            'favorites': favorites.load(_favorites_path()),
+                                           'last': favorites.load_last(_favorites_path()),
                                            'dataOnly': sorted(data_only.load(_data_only_path())),
                                            'dataOnlyNote': data_only.SHORT})
             self._expand({'nodeId': 'root', 'kind': 'root'})
@@ -610,14 +618,20 @@ def _jobs_incoming(event):
     elif event.action == 'elements':
         # The element list stored with a loaded reference; read from the design, not the cloud.
         _, design = _active_design_or_none()
-        packed = fusion_ops.read_elements(design, _event_data(event).get('key')) if design else None
+        key = _event_data(event).get('key')
+        packed = fusion_ops.read_elements(design, key) if design else None
+        if packed is None and design:
+            packed = (fusion_ops.read_data_only(design).get(key) or {}).get('elements')
         event.returnData = json.dumps(packed or {'total': 0, 'listed': [], 'missing': True})
+    elif event.action in ('rereadData', 'removeData'):
+        key, again = _event_data(event).get('key'), event.action == 'rereadData'
+        _post_to_main(lambda: _data_only_action(key, again))
     elif event.action == 'refresh':
         key = _event_data(event).get('key')
         _post_to_main(lambda: _queue_refresh(only=key))
     elif event.action == 'openExchange':
         link = _summary_links.get(_event_data(event).get('key'))
-        if link and link.startswith(doc_meta.DOCS_FILES_URL):
+        if doc_meta.is_forma_link(link):
             webbrowser.open(link)
     elif event.action == 'clear':
         _queue.clear_finished()
@@ -628,7 +642,7 @@ def _jobs_incoming(event):
         except (ValueError, TypeError):
             return
         link = next((job.link for job in _queue.jobs if job.id == job_id), None)
-        if link and link.startswith(doc_meta.DOCS_FILES_URL):
+        if doc_meta.is_forma_link(link):
             webbrowser.open(link)
     elif event.action == 'continue':
         try:
@@ -646,6 +660,26 @@ _watch_refs = {}      # exchange id -> exchange reference, for the periodic revi
 RECHECK_SECONDS = 300.0   # pushed notices were not seen live, so revisions are also rechecked this often
 _poller = {'stop': None}
 POLL_SECONDS = 2.0
+
+
+def _data_only_action(key, again):
+    """Read a data-only exchange's element data again, or forget it. Runs on the main thread."""
+    document, design = _active_design_or_none()
+    record = fusion_ops.read_data_only(design).get(key) if design else None
+    if record is None:
+        return
+    exchange = record['exchange']
+    if not again:
+        fusion_ops.remove_data_only(design, key)
+        _push_summary()
+        return
+    helper = client()
+
+    def reread(job):
+        return (yield from _data_only_part(job, document, helper, exchange, record.get('hubId'),
+                                           record.get('projectId'), record.get('fileUrn')))
+
+    _submit(('data', key), 'Read data of "%s"' % (exchange.get('name') or 'exchange'), document, reread)
 
 
 def _apply_status(status):
@@ -805,7 +839,7 @@ def _location(exchange):
 
 def _summary():
     document, design = _active_design_or_none()
-    state = {'document': None, 'consumed': [], 'published': None, 'checking': _check['running'],
+    state = {'document': None, 'consumed': [], 'dataOnly': [], 'published': None, 'checking': _check['running'],
              'checkedAt': _check['at'], 'dark': _is_dark_theme()}
     if design is None:
         return state
@@ -830,6 +864,21 @@ def _summary():
             'state': status, 'statusText': text, 'canRefresh': status == 'behind',
             'checking': _check['running'],
             'notes': [n for n in [doc_meta.changes_note((check or {}).get('changes'))] if n and status == 'behind'],
+        })
+
+    for key, record in sorted(fusion_ops.read_data_only(design).items(), key=lambda kv: kv[1].get('readAtUtc') or ''):
+        exchange = record['exchange']
+        link = doc_meta.docs_url(exchange, record.get('source', 'aecdm'))
+        if link:
+            _summary_links['data:' + key] = link
+        state['dataOnly'].append({
+            'key': key, 'linkKey': 'data:' + key, 'hasLink': bool(link),
+            'name': exchange.get('name') or 'Exchange', 'location': _location(exchange),
+            'revision': None, 'at': record.get('readAtUtc'), 'mock': record.get('source') == 'mock',
+            'elements': (record.get('elements') or {}).get('total', 0),
+            'state': 'dataonly', 'shortStatus': 'Data only', 'checking': False, 'canRefresh': False,
+            'statusText': 'AEC Data Model exchange: data only, no geometry. The element data is a copy read on the date shown.',
+            'notes': [],
         })
 
     published = fusion_ops.read_published(design)
@@ -980,10 +1029,31 @@ def _load_created(args):
     command.setDialogInitialSize(440, 640)
     command.setDialogMinimumSize(340, 480)
     status = _status_box(inputs, 'dxLoadStatus')
-    status.text = 'Open a hub, project and folder, then pick an exchange.'
+    status.text = 'Open a hub, project and folder, then pick an exchange. Or paste a link from Autodesk Forma.'
+    link = inputs.addStringValueInput('dxLoad_link', 'Forma link', '')
+    link.tooltip = ('Optional. Paste the address of an exchange copied from Autodesk Forma to load it '
+                    'without browsing. Leave empty to pick from the list.')
+
+    def linked():
+        """(ids from the pasted link, problem). Both None when the box is empty."""
+        text = link.value.strip()
+        if not text:
+            return None, None
+        found = doc_meta.parse_forma_link(text)
+        if found is None:
+            return None, 'That is not an Autodesk Forma file link.'
+        if not found['fileUrn']:
+            return None, ('That link opens a folder, not an exchange. Open the exchange in Autodesk Forma '
+                          'and copy its link.')
+        return found, None
 
     def selection_changed():
-        if explorer.current_exchange():
+        found, problem = linked()
+        if problem:
+            status.text = problem
+        elif found:
+            status.text = 'Load will use the pasted link. Clear the link to pick from the list instead.'
+        elif explorer.current_exchange():
             status.text = 'Selected: ' + explorer.path_text()
         else:
             status.text = 'Pick an exchange (the items with the blue arrows) inside a folder.'
@@ -996,6 +1066,11 @@ def _load_created(args):
                          'on the Fusion origin, useful when the source model sits far from it.')
 
     def picked_ids():
+        found, problem = linked()
+        if problem:
+            return None
+        if found:
+            return None, found['projectId'], found['fileUrn']   # the job finds the hub
         picked, hub, project = explorer.current_exchange(), explorer.current_hub(), explorer.current_project()
         if not (picked and hub and project):
             return None
@@ -1006,13 +1081,30 @@ def _load_created(args):
         if ids is None:
             raise fusion_ops.FusionOpError('No exchange was selected. Run Load Exchange again and pick one.')
         hub_id, project_id, file_urn = ids
+        if hub_id is not None:
+            explorer.remember()
         mode = doc_meta.PLACEMENT_AT_ORIGIN if placement.selectedItem.name == 'Move to origin' else doc_meta.PLACEMENT_AS_PUBLISHED
         _defer(lambda: _submit(
             ('load', file_urn), 'Load exchange', document,
             lambda job: _load_job(job, document, hub_id, project_id, file_urn, mode, convert)))
 
+    _on(command.inputChanged, _Changed(lambda event: selection_changed() if event.input.id == 'dxLoad_link' else None))
     _on(command.validateInputs, _Validate(lambda: picked_ids() is not None))
     _on(command.execute, _Execute(run))
+
+
+def _find_hub(helper, project_id):
+    """The hub that holds a project, for a pasted link (which names the project but not the hub)."""
+    for hub in helper.hubs() or []:
+        try:
+            projects = helper.projects(hub['hubId']) or []
+        except HelperError:
+            continue  # a hub this account cannot list is not the one
+        if any((p.get('projectId') or '').lower() == project_id.lower() for p in projects):
+            return hub['hubId']
+    raise fusion_ops.FusionOpError(
+        'The project in that link is not in any hub your account can see. Check that you are signed in '
+        'with the right account.')
 
 
 def _import_reference(exports, document, helper, exchange, placement, replace=None, convert_part=False):
@@ -1038,6 +1130,27 @@ def _import_reference(exports, document, helper, exchange, placement, replace=No
     return fusion_ops.import_reference(design, exports[-1], exchange, placement, replace_component=replace)
 
 
+def _data_only_part(job, document, helper, exchange, hub_id, project_id, file_urn):
+    """Part of a load job: a data-only exchange has no geometry, so read and keep its element data."""
+    try:
+        data = yield jobs.Background('Data only, no geometry: reading its element data',
+                                     lambda: helper.data_only_elements(hub_id, project_id, file_urn))
+    except HelperError as e:
+        raise fusion_ops.FusionOpError('%s\n\nIts element data could not be read either: %s' % (
+            data_only.MESSAGE, _FRIENDLY.get(e.code) if e.code in ('AUTH_REQUIRED', 'NETWORK_ERROR') else e.message))
+    record = doc_meta.build_data_only(exchange, data, hub_id, project_id, file_urn)
+    yield jobs.WhenIdle('Keeping the element data with the design')
+    fusion_ops.write_data_only(fusion_ops.design_of(document), record)
+    job.link = doc_meta.docs_url(exchange, record['source'])
+    listed, total = len(record['elements']['listed']), record['elements']['total']
+    return ('%sData only, no geometry: this is an AEC Data Model exchange, so nothing was added to the model.\n'
+            'Its element data was read instead: %d element%s%s. Open Elements on its row in the panel.\n%s' % (
+                'MOCK MODE: fixture data. ' if record['source'] == 'mock' else '',
+                total, '' if total == 1 else 's',
+                ' (the first %d are kept)' % listed if total > listed else '',
+                _keep_link(document, 'Data Exchange: read data of "%s"' % (exchange.get('name') or 'exchange'))[1]))
+
+
 def _mesh_note(metadata):
     if metadata.get('geometryKind') == 'mesh':
         return 'Imported as a mesh: this exchange has no solid geometry.'
@@ -1049,6 +1162,8 @@ def _load_job(job, document, hub_id, project_id, file_urn, placement, convert_pa
     exports = []
     helper = client()
     try:
+        if hub_id is None:
+            hub_id = yield jobs.Background('Finding the project from the link', lambda: _find_hub(helper, project_id))
         exchange = yield jobs.Background('Finding the exchange', lambda: helper.resolve(hub_id, project_id, file_urn))
         if exchange.get('name'):
             job.title = 'Load "%s"' % exchange['name']
@@ -1065,9 +1180,10 @@ def _load_job(job, document, hub_id, project_id, file_urn, placement, convert_pa
         except HelperError as e:
             if not data_only.is_error(e.code, e.message):
                 raise
-            # An AEC Data Model exchange: data only. Remember it so the explorer flags it from now on.
+            # An AEC Data Model exchange: data only. Remember it so the explorer flags it from now on,
+            # then read its element data instead of geometry.
             data_only.add(_data_only_path(), file_urn, exchange.get('name'))
-            raise fusion_ops.FusionOpError(data_only.MESSAGE)
+            return (yield from _data_only_part(job, document, helper, exchange, hub_id, project_id, file_urn))
         yield jobs.WhenIdle('Importing into Fusion')
         component, metadata = yield from _import_reference(
             exports, document, helper, exchange, placement, convert_part=convert_part)
@@ -1296,6 +1412,7 @@ def _publish_created(args):
             {'mode': publish_scope.MODE_SELECTION, 'items': fusion_ops.selection_items(picked_entities())}
             if picking() else None)
         if is_new():
+            explorer.remember()
             target_new = new_target()
             if target_new is None:
                 raise fusion_ops.FusionOpError(

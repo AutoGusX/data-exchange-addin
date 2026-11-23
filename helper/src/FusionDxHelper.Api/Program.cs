@@ -27,7 +27,9 @@ var exportRoot = Path.Combine(HelperPaths.Data, "exports");
 HelperApp.TryDelete(exportRoot); // geometry left behind by an earlier run
 Directory.CreateDirectory(exportRoot);
 
-var app = HelperApp.Build(service, secret, exportRoot, new HelperLog(Path.Combine(HelperPaths.Data, "logs")));
+// Fixture data is never cached: mock revisions are advanced by hand during tests.
+var cache = service.Mode == "mock" ? null : new ExportCache(Path.Combine(exportRoot, "cache"));
+var app = HelperApp.Build(service, secret, exportRoot, new HelperLog(Path.Combine(HelperPaths.Data, "logs")), cache: cache);
 await app.StartAsync();
 
 // The add-in reads this one line to learn the port. The secret is never printed.

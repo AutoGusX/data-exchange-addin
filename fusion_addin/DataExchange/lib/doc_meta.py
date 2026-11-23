@@ -13,6 +13,8 @@ ATTR_REFERENCE = 'reference'
 ATTR_PUBLISHED = 'published'
 ATTR_ELEMENTS = 'elements'      # on the reference component: what the exchange contains (names, properties)
 MAX_ELEMENTS_STORED = 300
+ATTR_DATA_ONLY = 'dataOnly'     # on the root component: data-only exchanges read into this design
+MAX_DATA_ONLY = 10              # data-only exchanges kept per design
 SCHEMA_VERSION = 1
 IMPORT_MODE = 'read-only-reference'
 PLACEMENT_AS_PUBLISHED = 'as-published'
@@ -40,13 +42,33 @@ def _check_exchange(exchange):
 
 
 DOCS_FILES_URL = 'https://acc.autodesk.com/docs/files/projects/'
+# Web host of Autodesk Forma (ACC) per hub region
+# (https://aps.autodesk.com/en/docs/acc/v1/overview/acc-regions). Unknown or missing: the US host.
+REGION_HOSTS = {'US': 'acc.autodesk.com', 'EMEA': 'acc.autodesk.eu', 'EU': 'acc.autodesk.eu',
+                'AUS': 'acc.aus.autodesk.com', 'APAC': 'acc.aus.autodesk.com', 'CAN': 'acc.can.autodesk.com',
+                'DEU': 'acc.deu.autodesk.com', 'IND': 'acc.ind.autodesk.com', 'JPN': 'acc.jpn.autodesk.com',
+                'GBR': 'acc.gbr.autodesk.com'}
+
+
+def forma_host(region):
+    return REGION_HOSTS.get(str(region or '').strip().upper(), REGION_HOSTS['US'])
+
+
+def is_forma_link(url):
+    """True for an address this add-in may open in the browser: https on a known Autodesk Forma host."""
+    from urllib.parse import urlparse
+    try:
+        parts = urlparse(url or '')
+    except ValueError:
+        return False
+    return parts.scheme == 'https' and (parts.hostname or '').lower() in set(REGION_HOSTS.values())
 
 
 def docs_url(exchange, source='sdk'):
     """The Autodesk Forma (ACC) web page for an exchange, or None when it cannot be built.
 
     Same shape as the link Docs itself gives: the project, the folder, and the exchange item opened
-    in the detail view. Without a usable item id the link opens the folder. Mock data has no page.
+    in the detail view, on the web host of the hub's region (exchange['region']; US when not known). Without a usable item id the link opens the folder. Mock data has no page.
     """
     from urllib.parse import urlencode
     if source == 'mock' or not isinstance(exchange, dict):
@@ -61,13 +83,39 @@ def docs_url(exchange, source='sdk'):
     if item.startswith('urn:') and ':dm.lineage:' in item:
         query += [('entityId', item), ('viewModel', 'detail')]
     query.append(('moduleId', 'folders'))
-    return DOCS_FILES_URL + project + '?' + urlencode(query)
+    return 'https://%s/docs/files/projects/%s?%s' % (forma_host(exchange.get('region')), project, urlencode(query))
+
+
+def parse_forma_link(text):
+    """The ids in a pasted Autodesk Forma (ACC) file link, or None when it is not one.
+
+    Returns {'projectId': 'b.<guid>', 'folderUrn': str or None, 'fileUrn': str or None}. fileUrn is
+    set only when the link opens an item (entityId is a lineage URN); a folder link has none.
+    """
+    import re
+    from urllib.parse import parse_qs, urlparse
+    try:
+        parts = urlparse((text or '').strip())
+    except ValueError:
+        return None
+    host = (parts.hostname or '').lower()
+    if parts.scheme != 'https' or not (host.endswith('.autodesk.com') or host.endswith('.autodesk.eu')):
+        return None
+    match = re.search(r'/projects/([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?:/|$)', parts.path)
+    if not match:
+        return None
+    query = parse_qs(parts.query)
+    folder = (query.get('folderUrn') or [None])[0]
+    item = ((query.get('entityId') or [''])[0]).split('?')[0]
+    return {'projectId': 'b.' + match.group(1).lower(),
+            'folderUrn': folder if folder and folder.startswith('urn:') else None,
+            'fileUrn': item if item.startswith('urn:') and ':dm.lineage:' in item else None}
 
 
 def slim_exchange(exchange):
     """Keep only what the helper needs to address the exchange again, plus display names."""
     _check_exchange(exchange)
-    keep = _EXCHANGE_KEYS + ('projectId', 'fileUrn', 'name', 'projectName', 'folderUrn')
+    keep = _EXCHANGE_KEYS + ('projectId', 'fileUrn', 'name', 'projectName', 'folderUrn', 'region')
     return {k: exchange[k] for k in keep if exchange.get(k) is not None}
 
 
@@ -164,6 +212,29 @@ def mesh_unit(source_length_unit):
     report, so that text decides the scale. An unknown unit means the mesh is not imported at all.
     """
     return _MESH_UNITS.get(str(source_length_unit or '').strip().lower())
+
+
+def build_data_only(exchange, data, hub_id, project_id, file_urn, now=None):
+    """The stored record of a data-only (AEC Data Model based) exchange: where it is and its element data.
+
+    There is no geometry and no revision id to track; readAtUtc says how old the copy is.
+    """
+    elements = [{'displayName': e.get('name'), 'category': e.get('category'), 'properties': e.get('properties')}
+                for e in (data.get('listed') or []) if isinstance(e, dict)]
+    packed = pack_elements(elements)
+    packed['total'] = max(int(data.get('total') or 0), len(packed['listed']))
+    return {'exchange': slim_exchange(exchange), 'exchangeId': exchange['exchangeId'],
+            'hubId': hub_id, 'projectId': project_id, 'fileUrn': file_urn,
+            'readAtUtc': now or _utc_now(), 'source': data.get('source') or 'aecdm', 'elements': packed}
+
+
+def merge_data_only(stored, record):
+    """stored ({exchangeId: record}) with one record added or replaced; the oldest go past the cap."""
+    merged = {k: v for k, v in (stored or {}).items() if isinstance(v, dict) and k != record['exchangeId']}
+    merged[record['exchangeId']] = record
+    while len(merged) > MAX_DATA_ONLY:
+        merged.pop(min(merged, key=lambda k: merged[k].get('readAtUtc') or ''))
+    return merged
 
 
 def changes_note(changes):

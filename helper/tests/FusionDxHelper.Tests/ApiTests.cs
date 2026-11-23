@@ -271,6 +271,33 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExportCacheReturnsTheSameRevisionWithoutAnotherDownload()
+    {
+        await mock.LoginAsync(CancellationToken.None);
+        var exchange = (await mock.ResolveExchangeAsync(MockExchangeService.HubId, MockExchangeService.ProjectId,
+            "urn:mock:file:building-core", CancellationToken.None));
+        var first = Path.Combine(root, "cache-test", "first");
+        Directory.CreateDirectory(first);
+        var export = await mock.ExportAsync(exchange, first, CancellationToken.None);
+        var cache = new ExportCache(Path.Combine(root, "cache-test", "cache"));
+        var second = Path.Combine(root, "cache-test", "second");
+        Assert.Null(cache.TryRestore(exchange.ExchangeId, export.Manifest.RevisionId, false, second));
+        cache.Store(export, false);
+        var hit = cache.TryRestore(exchange.ExchangeId, export.Manifest.RevisionId, false, second);
+        Assert.NotNull(hit);
+        Assert.Equal(export.Manifest.RevisionId, hit!.Manifest.RevisionId);
+        Assert.True(File.Exists(Path.Combine(second, hit.Manifest.ExchangeGeometry!.BlobRef!)));
+        // Another revision, or the mesh form, is a miss.
+        Assert.Null(cache.TryRestore(exchange.ExchangeId, "other-revision", false, Path.Combine(root, "cache-test", "third")));
+        Assert.Null(cache.TryRestore(exchange.ExchangeId, export.Manifest.RevisionId, true, Path.Combine(root, "cache-test", "fourth")));
+        // Over the size limit the entry is dropped rather than kept forever.
+        var tiny = new ExportCache(Path.Combine(root, "cache-test", "tiny"), maxBytes: 1);
+        tiny.Store(export, false);
+        tiny.Store(export with { Manifest = export.Manifest with { RevisionId = "newer" } }, false);
+        Assert.Null(tiny.TryRestore(exchange.ExchangeId, export.Manifest.RevisionId, false, Path.Combine(root, "cache-test", "fifth")));
+    }
+
+    [Fact]
     public void AecDataModelRefusalIsRecognised()
     {
         // The text the service returned for a real AEC Data Model exchange (helper log, 2026-11-17).

@@ -48,6 +48,19 @@ public sealed record ProjectDto(string ProjectId, string Name, string HubId, str
 
 public sealed record FolderDto(string FolderId, string Name, bool HasChildren, bool ReadOnly);
 
+/// <summary>One element of a data-only (AEC Data Model based) exchange: name, category, properties.</summary>
+public sealed record DataElement(string Name, string? Category, Dictionary<string, string>? Properties)
+{
+    public const int MaxProperties = 40;
+    public const int MaxValueLength = 200;
+}
+
+/// <summary>The element data of a data-only exchange. Total is the real count; Listed is capped.</summary>
+public sealed record DataOnlyElements(string? Name, int Total, IReadOnlyList<DataElement> Listed, string Source)
+{
+    public const int MaxListed = 200;
+}
+
 /// <summary>An exchange as listed in a folder, before it has been resolved to an <see cref="ExchangeRef"/>.</summary>
 public sealed record ExchangeListItem(string FileUrn, string Name);
 
@@ -63,7 +76,9 @@ public sealed record ExchangeRef(
     string? FileUrn = null,
     string? Name = null,
     string? ProjectName = null,
-    string? FolderUrn = null);
+    string? FolderUrn = null,
+    // Region of the hub (US, EMEA, AUS, ...): decides the web address of the exchange in Autodesk Forma.
+    string? Region = null);
 
 public sealed record RevisionInfo(string RevisionId, DateTime? LastModifiedUtc, int RevisionCount);
 

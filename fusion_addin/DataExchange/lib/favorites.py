@@ -60,11 +60,37 @@ def load(path):
     return cleaned
 
 
-def _save(path, favorites):
+def load_last(path):
+    """The folder last used to load or publish (same shape as a favorite), or None."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return _clean(raw.get('last')) if isinstance(raw, dict) else None
+
+
+def save_last(path, location):
+    """Remember the folder of a load or publish. An exchange inside the folder is dropped from the path."""
+    if isinstance(location, dict) and location.get('kind') == 'exchange':
+        location = dict(location, path=list(location.get('path') or [])[:-1])
+    last = _clean(location)
+    if last is None:
+        return None
+    _save(path, load(path), last)
+    return last
+
+
+_KEEP = object()
+
+
+def _save(path, favorites, last=_KEEP):
+    if last is _KEEP:
+        last = load_last(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     temp = path + '.tmp'
     with open(temp, 'w', encoding='utf-8') as f:
-        json.dump({'version': 1, 'favorites': favorites}, f, indent=2)
+        json.dump({'version': 1, 'favorites': favorites, 'last': last}, f, indent=2)
     os.replace(temp, path)
 
 

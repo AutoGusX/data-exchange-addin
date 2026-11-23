@@ -40,6 +40,10 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
     private bool eventsHooked;
     private volatile ProgressInfo? progress;
     private Client? client;
+    private Auth? signedIn;
+    /// <summary>The element data last read, so a refresh (compare, then download) reads it once.</summary>
+    private (string ExchangeId, string RevisionId, Autodesk.DataExchange.Interface.IElementDataModel Model, DateTime At)? lastModel;
+    private static readonly TimeSpan ModelLife = TimeSpan.FromMinutes(3);
     private AccountInfo? account;
 
     public string Mode => "sdk";
@@ -108,6 +112,7 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
             {
             }
 
+            signedIn = auth;
             client = created;
             return account;
         }
@@ -122,6 +127,8 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
         // The SDK exposes no sign-out call. Dropping the client forgets the in-memory session; whether
         // the SDK also keeps a token cache on disk is an open item in docs/feasibility.md.
         client = null;
+        signedIn = null;
+        lastModel = null;
         account = null;
         updates.Clear();
         watched.Clear();
@@ -236,7 +243,7 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
             "collection id");
         var details = Value(await Run(() => sdk.GetExchangeDetailsAsync(collectionId, fileUrn)).ConfigureAwait(false),
             "exchange details");
-        return ToRef(details, hubId, project.ProjectId);
+        return ToRef(details, hubId, project.ProjectId, project.HubRegion);
     }
 
     public async Task<RevisionInfo> GetLatestRevisionAsync(ExchangeRef exchange, CancellationToken ct)
@@ -249,6 +256,17 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
         if (revisions.Count == 0)
             throw new HelperException(ErrorCodes.NotFound, "The exchange has no published revision yet.");
         return new RevisionInfo(revisions[0].Id, revisions[0].LastModifiedUTC, revisions.Count);
+    }
+
+    public async Task<DataOnlyElements> GetDataOnlyElementsAsync(string hubId, string projectId, string fileUrn, CancellationToken ct)
+    {
+        Sdk();
+        var auth = signedIn ?? throw new HelperException(ErrorCodes.AuthRequired, "Sign in first.");
+        var project = await ProjectAsync(hubId, projectId).ConfigureAwait(false);
+        // The token stays inside the helper: it is used for this call and never returned or logged.
+        var token = await Run(() => auth.GetAuthTokenAsync()).ConfigureAwait(false);
+        return await AecDataModelReader.ReadAsync(token, project.HubRegion, project.ProjectId, fileUrn,
+            DataOnlyElements.MaxListed, ct).ConfigureAwait(false);
     }
 
     public async Task DeleteExchangeAsync(string hubId, string projectId, string fileUrn, CancellationToken ct)
@@ -357,6 +375,7 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
 
         // The SDK reports changes per revision on a loaded model (same calls as Autodesk's console sample).
         var model = Value(await Run(() => sdk.GetElementDataModelAsync(identifier)).ConfigureAwait(false), "element data model");
+        lastModel = (exchange.ExchangeId, latest, model, DateTime.UtcNow);
         var created = Changes(model.GetCreatedElements(newer));
         var modified = Changes(model.GetModifiedElements(newer));
         var deleted = Changes(model.GetDeletedElements(newer));
@@ -418,7 +437,12 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
         var warnings = new List<ManifestWarning>();
         var elements = new List<ManifestElement>();
         string? lengthUnit = null;
-        var model = Value(await Run(() => sdk.GetElementDataModelAsync(identifier)).ConfigureAwait(false), "element data model");
+        var kept = lastModel;
+        var model = kept is { } k && k.ExchangeId == exchange.ExchangeId && k.RevisionId == revision.RevisionId
+                && DateTime.UtcNow - k.At < ModelLife
+            ? k.Model
+            : Value(await Run(() => sdk.GetElementDataModelAsync(identifier)).ConfigureAwait(false), "element data model");
+        lastModel = null;   // used once: a large model is not kept in memory
         foreach (var element in model.Elements)
         {
             var sourceId = string.IsNullOrWhiteSpace(element.SourceId) ? element.UniqueId : element.SourceId;
@@ -526,7 +550,7 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
                 Description = string.Empty,
             };
             var details = Value(await Run(() => sdk.CreateExchangeAsync(create, ct)).ConfigureAwait(false), "created exchange");
-            target = ToRef(details, fresh.HubId, project.ProjectId);
+            target = ToRef(details, fresh.HubId, project.ProjectId, project.HubRegion);
             // A new exchange has no snapshot until its first sync, so it starts from an empty model.
             model = ElementDataModel.Create(sdk);
         }
@@ -668,7 +692,7 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
         HubId = exchange.HubId,
     };
 
-    private static ExchangeRef ToRef(ExchangeDetails details, string hubId, string projectId) => new(
+    private static ExchangeRef ToRef(ExchangeDetails details, string hubId, string projectId, string? region) => new(
         details.ExchangeID,
         details.CollectionID,
         details.HubId ?? hubId,
@@ -676,7 +700,8 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
         details.FileUrn,
         details.DisplayName,
         details.ProjectName,
-        details.FolderUrn);
+        details.FolderUrn,
+        region);
 
     private static double[]? ToRowMajor(object? transformation, string sourceId, List<ManifestWarning> warnings)
     {

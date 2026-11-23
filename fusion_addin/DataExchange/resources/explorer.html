@@ -73,6 +73,9 @@
   var favRoot = { id: 'favroot', kind: 'favroot', name: '', parent: null, data: {}, children: [], loaded: true, loading: false, expanded: true };
   nodes.favroot = favRoot;
   var favorites = [];
+  // The folder last used to load or publish: shown first, opened and selected when the dialog opens.
+  var lastRoot = { id: 'lastroot', kind: 'favroot', name: '', parent: null, data: {}, children: [], loaded: true, loading: false, expanded: true };
+  nodes.lastroot = lastRoot;
 
   var treeEl = document.getElementById('tree');
   var filterEl = document.getElementById('filter');
@@ -133,6 +136,16 @@
       return child;
     });
     render();
+  }
+
+  function applyLast(last) {
+    if (!last || !last.folder || !last.hub || !last.project) return;
+    var node = { id: 'l' + (++counter), key: 'last', kind: 'folder', name: last.folder.name, parent: lastRoot,
+                 data: last.folder, ctx: { hub: last.hub, project: last.project, path: last.path, folder: last.folder },
+                 children: [], loaded: false, loading: false, expanded: false };
+    nodes[node.id] = node;
+    lastRoot.children = [node];
+    select(node);   // selects it and opens it
   }
 
   // Search: Enter in the filter box looks through every folder under the selected location.
@@ -325,12 +338,21 @@
       treeEl.appendChild(searchHeading);
       if (!search.busy && !search.error && searchRoot.children.length) treeEl.appendChild(renderChildren(searchRoot, 0, '', false));
     }
+    if (lastRoot.children.length) {
+      var lastHeading = document.createElement('div');
+      lastHeading.className = 'heading';
+      lastHeading.textContent = 'Last used';
+      treeEl.appendChild(lastHeading);
+      treeEl.appendChild(renderChildren(lastRoot, 0, '', false));
+    }
     if (favRoot.children.length) {
       var favHeading = document.createElement('div');
       favHeading.className = 'heading';
       favHeading.textContent = 'Favorites';
       treeEl.appendChild(favHeading);
       treeEl.appendChild(renderChildren(favRoot, 0, text, false));
+    }
+    if (favRoot.children.length || lastRoot.children.length) {
       var allHeading = document.createElement('div');
       allHeading.className = 'heading';
       allHeading.textContent = 'All locations';
@@ -429,6 +451,7 @@
       try { config = JSON.parse(text) || config; } catch (e) { /* keep defaults */ }
       if (config.dark) document.body.classList.add('dark');
       applyFavorites(config.favorites);
+      applyLast(config.last);
     };
     if (reply && reply.then) reply.then(apply); else if (typeof reply === 'string') apply(reply);
   }
