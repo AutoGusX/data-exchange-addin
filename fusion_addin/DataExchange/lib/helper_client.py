@@ -22,7 +22,7 @@ TRANSFER_TIMEOUT_S = 1800  # export / publish of a large exchange
 
 # The oldest helper this add-in can work with. An older one silently ignores request fields it does
 # not know (for example the extra elements of a publish), so the add-in refuses to use it for those.
-REQUIRED_HELPER = (0, 2, 0)
+REQUIRED_HELPER = (0, 3, 0)
 
 
 def version_tuple(text):

@@ -5,7 +5,7 @@ design as read-only reference geometry, refreshes them to the latest revision, a
 design as a Data Exchange. A local .NET helper does the sign-in and the Autodesk Data Exchange SDK
 work; the add-in owns the Fusion side.
 
-**Status (2026-11-23, v0.2.0):** used live in Fusion by its author against Autodesk Forma projects:
+**Status (2026-11-23, v0.3.0):** used live in Fusion by its author against Autodesk Forma projects:
 load, refresh, publish (whole design or selected components), background jobs and update notices.
 Windows only. Not yet tried with a Revit-authored exchange or on a clean machine; see
 `docs/VERIFICATION.md` for what has and has not been checked.
@@ -15,8 +15,8 @@ product. To run it you need your own APS client ID (a desktop/PKCE app, no clien
 callback URL `http://localhost:47821/`; see `docs/install-windows.md`. The Autodesk Data Exchange SDK
 is restored from NuGet at build time under its own terms and is not part of this repository.
 
-AEC Data Model exchanges hold data only, with no geometry, and cannot be loaded; the add-in says so
-and flags them.
+AEC Data Model exchanges hold data only, with no geometry, and cannot be loaded as geometry; the add-in
+says so, flags them, and tries to read their element data as a table instead.
 
 - Spec: `specs/001-fusion-revit-data-exchange-mvp.md`
 - How it fits together: `docs/architecture.md`

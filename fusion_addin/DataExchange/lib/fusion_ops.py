@@ -12,7 +12,7 @@ import threading
 import adsk.core
 import adsk.fusion
 
-from . import doc_meta, publish_scope
+from . import doc_meta, element_link, publish_scope
 
 
 class FusionOpError(Exception):
@@ -416,6 +416,91 @@ def read_elements(design, exchange_id):
             return None
         return packed if isinstance(packed, dict) else None
     return None
+
+
+# ---- elements <-> geometry (by name, see element_link.py) ----------------------------------------
+
+def _reference_occurrences(design, exchange_id):
+    """(occurrence of the reference component, every occurrence inside it), in the root's context."""
+    component = next((c for c, m in find_references(design) if m.get('exchangeId') == exchange_id), None)
+    if component is None:
+        return None, []
+    occurrences = _all_occurrences(design.rootComponent)
+    top = next((o for o in occurrences if o.component == component), None)
+    if top is None:
+        return None, []
+    below = top.fullPathName + publish_scope.SEPARATOR
+    return top, [o for o in occurrences if o.fullPathName.startswith(below)]
+
+
+def element_geometry(design, exchange_id, element_name):
+    """(entities, 'component' or 'body') named after an element of a loaded exchange; ([], None) for none.
+
+    Components are preferred: an element is usually one placed part. Bodies are the fallback for
+    exchanges whose parts arrive as bodies of one component.
+    """
+    top, inside = _reference_occurrences(design, exchange_id)
+    if top is None:
+        return [], None
+    hits = element_link.matching(element_name, [o.component.name for o in inside])
+    if hits:
+        return [inside[i] for i in hits], 'component'
+    bodies = []
+    for occurrence in [top] + inside:
+        for index in range(occurrence.bRepBodies.count):
+            bodies.append(occurrence.bRepBodies.item(index))
+    hits = element_link.matching(element_name, [b.name for b in bodies], bodies=True)
+    return ([bodies[i] for i in hits], 'body') if hits else ([], None)
+
+
+def select_entities(entities):
+    """Make these the active selection. Returns how many were selected."""
+    selections = adsk.core.Application.get().userInterface.activeSelections
+    selections.clear()
+    count = 0
+    for entity in entities:
+        try:
+            selections.add(entity)
+            count += 1
+        except RuntimeError:
+            pass  # hidden or otherwise not selectable right now
+    return count
+
+
+def elements_of_selection(design):
+    """(exchange id, element names) for the first selected body or component that belongs to a loaded
+    exchange and is named after one of its elements. (exchange id, []) when it belongs to an exchange
+    but no element matches; (None, []) when the selection is not part of any loaded exchange.
+    """
+    selections = adsk.core.Application.get().userInterface.activeSelections
+    references = [(c, m) for c, m in find_references(design)]
+    occurrences = _all_occurrences(design.rootComponent)
+    tops = [(o.fullPathName, m) for o in occurrences for c, m in references if o.component == c]
+    seen = None
+    for index in range(selections.count):
+        entity = selections.item(index).entity
+        face = adsk.fusion.BRepFace.cast(entity)
+        body = face.body if face is not None else adsk.fusion.BRepBody.cast(entity)
+        occurrence = adsk.fusion.Occurrence.cast(entity)
+        if body is not None:
+            path, candidates = _body_owner(body), [(body.name, True)]
+        elif occurrence is not None:
+            path, candidates = occurrence.fullPathName, []
+        else:
+            continue
+        for top, metadata in tops:
+            if not (path == top or path.startswith(top + publish_scope.SEPARATOR)):
+                continue
+            # Occurrence names from the picked part outwards, stopping below the reference itself.
+            chain = path[len(top):].strip(publish_scope.SEPARATOR)
+            names = [n for n in chain.split(publish_scope.SEPARATOR) if n] if chain else []
+            candidates = candidates + [(n, False) for n in reversed(names)]
+            packed = read_elements(design, metadata.get('exchangeId')) or {}
+            found = element_link.elements_named(candidates, packed.get('listed'))
+            if found:
+                return metadata.get('exchangeId'), found
+            seen = seen or metadata.get('exchangeId')
+    return seen, []
 
 
 def skipped_elements(manifest):

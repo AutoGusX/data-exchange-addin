@@ -6,7 +6,7 @@
   "description": {
     "": "Load, refresh and publish Autodesk Data Exchanges from Fusion."
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "runOnStartup": false,
   "supportedOS": "windows",
   "editEnabled": true

@@ -9,6 +9,9 @@ Spec: `specs/001-fusion-revit-data-exchange-mvp.md`.
       with `"mock": true` in the config.
 
 ## Next
+- [ ] Gus: paste the Forma link of the AEC Data Model exchange into Load Exchange. This is the one
+      check that tells whether the AEC Data Model API lists such exchanges (spec 003, findings).
+- [ ] Run the spec 003 section of `docs/VERIFICATION.md` in Fusion.
 - [ ] Spec 002 remaining: link elements to Fusion bodies (per-element import).
 - [ ] Open the spike's STEP output in Fusion and measure the fixture floor (expect 6000 mm).
 - [ ] Delete the test exchange `DX add-in test fixture` from the ACC folder when no longer needed.
@@ -30,6 +33,9 @@ Spec: `specs/001-fusion-revit-data-exchange-mvp.md`.
 - [ ] Compare with Autodesk's own Data Exchange connector for Fusion (positioning).
 
 ## Done
+- [x] 2026-11-23 Spec 003 built as v0.3.0: paste a Forma link, last used folder, regional links,
+      data-only element data (AEC Data Model API), element linking by name, session download cache.
+      Unit tested; helper parts checked live read-only. Not run in Fusion.
 - [x] 2026-11-23 AEC Data Model exchanges (data only, no geometry) are named as such when a load
       fails, and flagged in the explorer afterwards. Found in the helper log of 2026-11-17: the
       service answers "This API does not support AECDM based exchange". Not yet re-run in Fusion.

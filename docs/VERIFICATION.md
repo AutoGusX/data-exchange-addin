@@ -137,8 +137,32 @@ Setup: `%LOCALAPPDATA%\FusionDataExchange\config.json` contains `"mock": true`. 
 - [ ] Wi-Fi off: Refresh reports a network failure and the reference is intact.
 - [ ] An account without project access gets the access message, and no geometry.
 
-## AEC Data Model (data-only) exchanges
-- [ ] Load an AEC Data Model exchange. The job fails within seconds and says it is an AEC Data Model
-      exchange with data only and no geometry, not a generic error. The design is unchanged.
+## Spec 003 (v0.3.0): none of this has been run in Fusion yet
+
+### AEC Data Model (data-only) exchanges
+- [ ] Load an AEC Data Model exchange. The job does not import anything. It says the exchange is data
+      only with no geometry, and either that N elements were read, or that its data could not be read.
+- [ ] If the data was read: the panel shows a "Data only" row; Elements lists names, categories and
+      properties; Read again and Remove work; the row survives save, close and reopen.
 - [ ] Open Load Exchange again: that exchange is tagged "data only, no geometry" in the tree, and
       selecting it shows the same note in place of the preview.
+
+### Forma link, last folder, regions
+- [ ] Load Exchange: paste the link of an exchange copied from Autodesk Forma. Load turns on without
+      picking anything, the job shows "Finding the project from the link", and the exchange loads.
+- [ ] Paste a folder link, then some other text: the status line explains each, and Load stays off.
+- [ ] Load or publish, then open Load Exchange and Publish Exchange again: the folder used is listed
+      first under "Last used", already open and selected.
+- [ ] Open (panel) and the link after a publish open the exchange in the browser. On a non-US hub the
+      address uses that region's host.
+
+### Element linking
+- [ ] Panel > Elements on a loaded exchange: Select on a row selects the components (or bodies) named
+      like that element in the model, and the message says how many.
+- [ ] Select a body of the reference in the model, then Find selected: the matching rows are
+      highlighted and named in the message.
+- [ ] A row with no namesake says nothing is named like it and selects nothing.
+
+### Session download cache
+- [ ] Load the same exchange into a second design in the same Fusion session: the download step is
+      near instant. After restarting Fusion it downloads again.

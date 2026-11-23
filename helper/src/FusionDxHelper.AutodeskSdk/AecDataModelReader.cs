@@ -19,6 +19,14 @@ internal static class AecDataModelReader
     private const string ProjectQuery =
         "query($id: ID!) { projectByDataManagementAPIId(dataManagementAPIProjectId: $id) { id name } }";
 
+    private const string HubsQuery =
+        "query($pagination: PaginationInput) { hubs(pagination: $pagination) " +
+        "{ pagination { cursor } results { id alternativeIdentifiers { dataManagementAPIHubId } } } }";
+
+    private const string ProjectsQuery =
+        "query($hubId: ID!, $pagination: PaginationInput) { projects(hubId: $hubId, pagination: $pagination) " +
+        "{ pagination { cursor } results { id alternativeIdentifiers { dataManagementAPIProjectId } } } }";
+
     private const string GroupQuery =
         "query($projectId: ID!, $filter: ElementGroupFilterInput) { elementGroupsByProject(projectId: $projectId, filter: $filter) " +
         "{ results { id name alternativeIdentifiers { fileUrn } } } }";
@@ -28,11 +36,10 @@ internal static class AecDataModelReader
         "{ totalCount pagination { cursor } results { id name properties { results { name value displayValue } } } } }";
 
     public static async Task<DataOnlyElements> ReadAsync(
-        string token, string? region, string projectId, string fileUrn, int maxElements, CancellationToken ct)
+        string token, string? region, string hubId, string projectId, string fileUrn, int maxElements, CancellationToken ct)
     {
         var lineage = fileUrn.Split('?')[0];
-        var project = await QueryAsync(token, region, ProjectQuery, new { id = projectId }, ct).ConfigureAwait(false);
-        var aecProjectId = Text(project, "projectByDataManagementAPIId", "id")
+        var aecProjectId = await FindProjectAsync(token, region, hubId, projectId, ct).ConfigureAwait(false)
             ?? throw new HelperException(ErrorCodes.NotFound,
                 "The AEC Data Model API does not know this project. AEC Data Model may not be activated for the hub.");
 
@@ -75,6 +82,56 @@ internal static class AecDataModelReader
         while (!string.IsNullOrEmpty(cursor) && listed.Count < maxElements);
 
         return new DataOnlyElements(groupName, Math.Max(total, listed.Count), listed, "aecdm");
+    }
+
+    /// <summary>The AEC Data Model id of a project, from its Data Management ids.</summary>
+    private static async Task<string?> FindProjectAsync(string token, string? region, string hubId, string projectId, CancellationToken ct)
+    {
+        // The direct lookup first. Seen live 2026-11-23: it rejects a "b." id as malformed, so the
+        // id is tried as given and without the prefix before falling back to listing.
+        foreach (var id in new[] { projectId, projectId.StartsWith("b.", StringComparison.Ordinal) ? projectId[2..] : null })
+        {
+            if (id == null)
+                continue;
+            try
+            {
+                var direct = await QueryAsync(token, region, ProjectQuery, new { id }, ct).ConfigureAwait(false);
+                if (Text(direct, "projectByDataManagementAPIId", "id") is { Length: > 0 } found)
+                    return found;
+            }
+            catch (HelperException ex) when (ex.Code is ErrorCodes.InternalError or ErrorCodes.NotFound)
+            {
+                // Not accepted in this form: try the next one.
+            }
+        }
+
+        var aecHubId = await FindInPagesAsync(token, region, HubsQuery, "hubs", null,
+            "dataManagementAPIHubId", hubId, ct).ConfigureAwait(false);
+        if (aecHubId == null)
+            return null;
+        return await FindInPagesAsync(token, region, ProjectsQuery, "projects", aecHubId,
+            "dataManagementAPIProjectId", projectId, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<string?> FindInPagesAsync(string token, string? region, string query, string field,
+        string? hubId, string alternativeName, string wanted, CancellationToken ct)
+    {
+        string? cursor = null;
+        for (var page = 0; page < 40; page++)
+        {
+            var data = await QueryAsync(token, region, query,
+                new { hubId, pagination = new { limit = 50, cursor } }, ct).ConfigureAwait(false);
+            if (!data.TryGetProperty(field, out var holder) || holder.ValueKind != JsonValueKind.Object)
+                return null;
+            foreach (var item in holder.GetProperty("results").EnumerateArray())
+                if (string.Equals(Text(item, "alternativeIdentifiers", alternativeName), wanted, StringComparison.OrdinalIgnoreCase))
+                    return item.GetProperty("id").GetString();
+            cursor = holder.TryGetProperty("pagination", out var paging) && paging.ValueKind == JsonValueKind.Object
+                && paging.TryGetProperty("cursor", out var next) ? next.GetString() : null;
+            if (string.IsNullOrEmpty(cursor))
+                break;
+        }
+        return null;
     }
 
     private static DataElement ToElement(JsonElement element)

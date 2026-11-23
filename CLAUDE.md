@@ -8,13 +8,15 @@ from one clean commit (2026-11-23); the earlier working history lives on the loc
 branch. Never push that branch, and never commit hub, project or customer names, IDs or URNs. Commits
 use the GitHub noreply address set in this repo's git config.
 
-**Status 2026-11-23 (v0.2.0):** Gus runs it live in Fusion: load, refresh, publish (whole design or
+**Status 2026-11-23 (v0.3.0):** Gus runs it live in Fusion: load, refresh, publish (whole design or
 selected components), jobs, automatic save and update notices were reported working on 2026-11-16.
 Do not describe anything else as working in Fusion until `docs/VERIFICATION.md` says so. Live test
 data sits in the owner's own test project: exchanges `Drawing1_Default` (read only) and
 `DX add-in test fixture` (ours, safe to republish).
 
 ## Source of truth
+- `specs/003-data-only-exchanges-links-and-faster-refresh.md`: Forma link, last folder, regional links,
+  data-only element data, element linking, session download cache (built 2026-11-23, not run in Fusion).
 - `specs/001-fusion-revit-data-exchange-mvp.md`: the MVP spec, with a scope amendment at the top
   (publishing from Fusion is IN scope; callback port 47821).
 - `BACKLOG.md`: current work. Read it first; update it as work completes.

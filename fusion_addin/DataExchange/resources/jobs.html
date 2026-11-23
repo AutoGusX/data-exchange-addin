@@ -45,6 +45,10 @@
   tr.elements td { background:var(--card); padding:6px; }
   table.inner th, table.inner td { font-size:11px; padding:2px 6px; white-space:normal; overflow-wrap:anywhere; }
   table.inner td.props { color:var(--muted); }
+  table.inner tr.linked td { background:rgba(6,150,215,0.18); }
+  table.inner td.pick { white-space:nowrap; }
+  .linkbar { display:flex; gap:8px; align-items:center; margin-bottom:4px; }
+  .linkbar .msg { color:var(--muted); }
 
   /* jobs: one line each, click to expand */
   .jobs { border:1px solid var(--line); border-radius:2px; }
@@ -180,7 +184,7 @@
       list.title = 'Show what this exchange contains: element names, categories and properties.';
       list.onclick = function () {
         openElements[item.key] = !openElements[item.key];
-        if (openElements[item.key]) loadElements(item.key, elementsRow); else elementsRow.style.display = 'none';
+        if (openElements[item.key]) loadElements(item.key, elementsRow, role === 'Consumed'); else elementsRow.style.display = 'none';
       };
       actions.appendChild(list);
     }
@@ -195,7 +199,7 @@
       elementsRow.appendChild(holder);
       row.classList.add('hasnote');
       body.appendChild(elementsRow);
-      if (openElements[item.key]) loadElements(item.key, elementsRow);
+      if (openElements[item.key]) loadElements(item.key, elementsRow, role === 'Consumed');
     }
     if (item.mesh) notes.push('Loaded as a mesh: this exchange has no solid geometry.');
     if (notes.length) {
@@ -210,42 +214,80 @@
 
   var openElements = {};   // exchange key -> true while its element list is shown
 
-  function showElements(packed, rowEl) {
+  var linkState = {};      // exchange key -> { names: [...], message } from the last select or find
+
+  function showElements(packed, rowEl, key, linkable) {
     var holder = rowEl.firstChild;
     holder.innerHTML = '';
+    var link = linkState[key] || { names: [], message: '' };
     var listed = (packed && packed.listed) || [];
     if (!listed.length) {
       holder.appendChild(el('div', 'empty', packed && packed.missing
         ? 'No element list is stored for this reference. Refresh or reload it to record one.'
         : 'This exchange lists no elements.'));
     } else {
+      if (linkable) {
+        var bar = el('div', 'linkbar');
+        var find = el('button', '', 'Find selected');
+        find.title = 'Select a body or component of this exchange in the model, then click to see which element it is.';
+        find.onclick = function () { send('findSelected', { key: key }); };
+        bar.appendChild(find);
+        bar.appendChild(el('span', 'msg', link.message || 'Elements and geometry are linked by name.'));
+        holder.appendChild(bar);
+      }
       var table = el('table', 'inner');
       var head = el('tr');
-      ['Element', 'Category', 'Properties'].forEach(function (label) { head.appendChild(el('th', '', label)); });
+      ['Element', 'Category', 'Properties'].concat(linkable ? [''] : []).forEach(function (label) { head.appendChild(el('th', '', label)); });
       table.appendChild(head);
+      var firstLinked = null;
       listed.forEach(function (element) {
         var line = el('tr');
         line.appendChild(el('td', '', element.name));
         line.appendChild(el('td', '', element.category));
         var props = Object.keys(element.properties || {}).map(function (k) { return k + ': ' + element.properties[k]; });
         line.appendChild(el('td', 'props', props.join('; ')));
+        if (linkable) {
+          var pick = el('td', 'pick');
+          var select = el('button', '', 'Select');
+          select.title = 'Select the geometry named like this element in the model.';
+          select.onclick = function () { send('selectElement', { key: key, name: element.name }); };
+          pick.appendChild(select);
+          line.appendChild(pick);
+          if (link.names.indexOf(element.name) >= 0) { line.className = 'linked'; if (!firstLinked) firstLinked = line; }
+        }
         table.appendChild(line);
       });
       holder.appendChild(table);
       if (packed.total > listed.length) holder.appendChild(el('div', 'hint', 'Showing ' + listed.length + ' of ' + packed.total + ' elements.'));
     }
     rowEl.style.display = '';
+    if (firstLinked && firstLinked.scrollIntoView) firstLinked.scrollIntoView({ block: 'nearest' });
   }
 
-  function loadElements(key, rowEl) {
+  var elementRows = {};    // exchange key -> { row, linkable } of the element list last drawn
+
+  function loadElements(key, rowEl, linkable) {
+    if (linkable === undefined) linkable = (elementRows[key] || {}).linkable;
+    elementRows[key] = { row: rowEl, linkable: !!linkable };
     var reply = send('elements', { key: key });
-    var apply = function (text) { try { showElements(JSON.parse(text), rowEl); } catch (e) { /* leave it closed */ } };
+    var apply = function (text) { try { showElements(JSON.parse(text), rowEl, key, !!linkable); } catch (e) { /* leave it closed */ } };
     if (reply && reply.then) reply.then(apply); else if (typeof reply === 'string') apply(reply);
   }
 
+  // The add-in answers a Select or Find selected: show the message and mark the matching rows.
+  function onElementLink(reply) {
+    if (!reply || !reply.key) return;
+    linkState[reply.key] = { names: reply.names || [], message: reply.message || '' };
+    var drawn = elementRows[reply.key];
+    if (drawn && openElements[reply.key]) loadElements(reply.key, drawn.row, drawn.linkable);
+    else if (lastSummary) { openElements[reply.key] = true; renderSummary(lastSummary); }
+  }
+
+  var lastSummary = null;
   var SHORT = { current: 'Up to date', behind: 'Update available', diverged: 'Newer in cloud', unknown: 'Not checked', error: 'Check failed' };
 
   function renderSummary(state) {
+    lastSummary = state;
     setTheme(state.dark);
     document.getElementById('docTitle').textContent = state.document ? 'Exchanges in ' + state.document : 'Exchanges in this design';
     document.getElementById('check').disabled = !!state.checking || !state.document;
@@ -348,6 +390,7 @@
       try {
         if (action === 'jobs') renderJobs(JSON.parse(data));
         else if (action === 'summary') renderSummary(JSON.parse(data));
+        else if (action === 'elementLink') onElementLink(JSON.parse(data));
       } catch (e) { /* ignore a bad message */ }
       return 'OK';
     }

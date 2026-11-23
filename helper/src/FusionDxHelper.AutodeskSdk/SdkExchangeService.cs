@@ -265,7 +265,7 @@ public sealed class SdkExchangeService(SdkSettings settings) : IExchangeService
         var project = await ProjectAsync(hubId, projectId).ConfigureAwait(false);
         // The token stays inside the helper: it is used for this call and never returned or logged.
         var token = await Run(() => auth.GetAuthTokenAsync()).ConfigureAwait(false);
-        return await AecDataModelReader.ReadAsync(token, project.HubRegion, project.ProjectId, fileUrn,
+        return await AecDataModelReader.ReadAsync(token, project.HubRegion, hubId, project.ProjectId, fileUrn,
             DataOnlyElements.MaxListed, ct).ConfigureAwait(false);
     }
 

@@ -70,6 +70,16 @@ As of 2026-11-16, version 0.1.0.
 - **SDK redistribution:** confirm the APS terms before sharing the package outside Autodesk.
 - **Overlap:** check Autodesk's own Data Exchange connector for Fusion before positioning this.
 - AEC Data Model exchanges hold data only, with no geometry, and the Data Exchange service refuses to
-  read them through the SDK ("This API does not support AECDM based exchange"). They cannot be loaded.
-  The service only says so when a load is tried, so an exchange is flagged "data only, no geometry" in
-  the explorer after its first failed load on this machine, not before.
+  read them through the SDK ("This API does not support AECDM based exchange"). They cannot be loaded
+  as geometry. The service only says so when a load is tried, so an exchange is flagged "data only, no
+  geometry" in the explorer after its first load attempt on this machine, not before.
+- Reading the element data of a data-only exchange goes through the AEC Data Model API. Whether that
+  API lists such exchanges at all is not verified (see `specs/003`). The table keeps at most 200
+  elements and 40 properties each, as a copy read on the date shown; it is not kept up to date.
+- Elements and geometry are linked by name only. One Revit type placed many times is one piece of
+  linked geometry for all of its elements, and an element with no namesake in the model cannot be
+  selected. Mesh imports are not linked.
+- A refresh to a new revision downloads the whole exchange. Only a repeat download of the same
+  revision in the same Fusion session is served from the cache.
+- A pasted Forma link must be the link of the exchange itself (it carries `entityId`); folder links
+  and viewer links are not read. Regional web hosts other than the US one are from documentation.

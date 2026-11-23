@@ -66,6 +66,19 @@ Ids travel in the request body, not the path: one exchange is addressed by three
 
 Errors are `{code, message, correlationId}` (`contracts/errors.schema.json`).
 
+## Additions in 0.3.0 (spec 003)
+- `POST /v1/exchanges/data {hubId, projectId, fileUrn}`: element data of a data-only exchange, read by
+  the helper from the AEC Data Model API (`AecDataModelReader.cs`) with the signed-in user's token. The
+  token is used inside the helper only. The add-in keeps the result in the root attribute `dataOnly`.
+- `ExchangeRef.region`: hub region, used to pick the Autodesk Forma web host for links.
+- `ExportCache`: finished exports are kept under `exports\cache` per exchange and revision for the
+  life of the helper process (wiped at start and stop, 2 GB cap). The export route asks for the latest
+  revision first and serves a match from the cache.
+- `lib/element_link.py` (pure): name matching between exchange elements and Fusion components and
+  bodies. `fusion_ops.element_geometry` / `elements_of_selection` do the Fusion side.
+- `doc_meta.parse_forma_link`: reads a pasted link; the load job finds the hub by listing.
+- `favorites.json` also holds `last`, the folder last used to load or publish.
+
 ## Geometry
 
 Whole-exchange **STEP**, both directions. The SDK writes one STEP file for the exchange; Fusion's STEP

@@ -28,6 +28,7 @@ helper_client = _load('helper_client')
 jobs = _load('jobs')
 favorites = _load('favorites')
 data_only = _load('data_only')
+element_link = _load('element_link')
 publish_scope = _load('publish_scope')
 
 EXCHANGE = {'exchangeId': 'ex-1', 'collectionId': 'col-1', 'hubId': 'hub-1', 'name': 'Core', 'extra': 'dropped'}
@@ -614,6 +615,34 @@ class LastFolderTests(unittest.TestCase):
             self.assertEqual(favorites.load(path), [])
             self.assertIsNone(favorites.save_last(path, {'kind': 'hub'}))
             self.assertEqual(favorites.load_last(path), saved)
+
+
+class ElementLinkTests(unittest.TestCase):
+    def test_names_compare_without_the_decorations_each_side_adds(self):
+        for text in ('Wall (Right):15', 'Wall (Right)_852F4FD0050AA6441B68E6B9F8592230', 'Wall (Right) v2',
+                     'Wall (Right) (1)', 'wall (right):1', '  Wall (Right)  '):
+            self.assertEqual(element_link.name_key(text), 'wall (right)', text)
+        self.assertEqual(element_link.name_key(None), '')
+        self.assertEqual(element_link.body_key('00-Component3_1'), 'component3')
+        self.assertEqual(element_link.name_key('00-Component3_1'), '00-component3')
+        self.assertEqual(element_link.name_key('Nut, Hex Regular_2'), element_link.name_key('Nut, Hex Regular:13'))
+
+    def test_an_element_finds_every_piece_of_geometry_named_like_it(self):
+        components = ['Wall_64E5BBF721EAE4F38066FDADE3D0825C', 'Impact Door_30C70E55C7DC49A340A0A961057D0BE1',
+                      'Wall_64E5BBF721EAE4F38066FDADE3D0825C (1)', 'Wall (Left)_21B7ADF41A968CC14B5CB5FDA0078555']
+        self.assertEqual(element_link.matching('Wall:14', components), [0, 2])
+        self.assertEqual(element_link.matching('Roof:1', components), [])
+        self.assertEqual(element_link.matching('', components), [])
+        self.assertEqual(element_link.matching('Component3', ['00-Component3_1', 'Box']), [])
+        self.assertEqual(element_link.matching('Component3', ['00-Component3_1', 'Box'], bodies=True), [0])
+
+    def test_geometry_finds_its_elements_from_the_most_specific_name_outwards(self):
+        elements = [{'name': 'Wall:14'}, {'name': 'Wall:15'}, {'name': 'Impact Door:2'}, {'name': ''}]
+        self.assertEqual(element_link.elements_named(
+            [('Solid5', True), ('Wall_64E5BBF721EAE4F38066FDADE3D0825C:1', False)], elements), ['Wall:14', 'Wall:15'])
+        self.assertEqual(element_link.elements_named([('Solid5', True), ('Roof:1', False)], elements), [])
+        self.assertEqual(element_link.elements_named([('00-Impact Door_1', True)], elements), ['Impact Door:2'])
+        self.assertEqual(element_link.elements_named([], None), [])
 
 
 class DataOnlyTests(unittest.TestCase):

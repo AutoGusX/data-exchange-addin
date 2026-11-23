@@ -623,6 +623,10 @@ def _jobs_incoming(event):
         if packed is None and design:
             packed = (fusion_ops.read_data_only(design).get(key) or {}).get('elements')
         event.returnData = json.dumps(packed or {'total': 0, 'listed': [], 'missing': True})
+    elif event.action in ('selectElement', 'findSelected'):
+        data, find = _event_data(event), event.action == 'findSelected'
+        # Selection work is document work: not from inside the page event.
+        _post_to_main(lambda: _element_link(data.get('key'), data.get('name'), find))
     elif event.action in ('rereadData', 'removeData'):
         key, again = _event_data(event).get('key'), event.action == 'rereadData'
         _post_to_main(lambda: _data_only_action(key, again))
@@ -660,6 +664,41 @@ _watch_refs = {}      # exchange id -> exchange reference, for the periodic revi
 RECHECK_SECONDS = 300.0   # pushed notices were not seen live, so revisions are also rechecked this often
 _poller = {'stop': None}
 POLL_SECONDS = 2.0
+
+
+def _element_link(key, name, find):
+    """Select the geometry of an element, or name the elements of what is selected. Answers the panel."""
+    _, design = _active_design_or_none()
+    reply = {'key': key, 'names': [], 'message': ''}
+    if design is None:
+        reply['message'] = 'Open the design first.'
+    elif find:
+        found_key, names = fusion_ops.elements_of_selection(design)
+        reply['key'] = found_key or key
+        reply['names'] = names
+        if names:
+            reply['message'] = 'Selected geometry belongs to: %s.' % ', '.join(names[:5])
+        elif found_key:
+            reply['message'] = ('The selection is part of this exchange, but no element is named like it. '
+                                'The link is by name only.')
+        else:
+            reply['message'] = 'Select a body or component of a loaded exchange in the model first.'
+    else:
+        entities, kind = fusion_ops.element_geometry(design, key, name)
+        count = fusion_ops.select_entities(entities) if entities else 0
+        if count:
+            reply['names'] = [name]
+            noun = kind if count == 1 else ('bodies' if kind == 'body' else 'components')
+            reply['message'] = 'Selected %d %s named like "%s".' % (count, noun, name)
+        else:
+            reply['message'] = ('Nothing in the model is named like "%s", so it cannot be selected. '
+                                'The link is by name only.' % name)
+    palette = _jobs_palette(create=False)
+    if palette is not None:
+        try:
+            palette.sendInfoToHTML('elementLink', json.dumps(reply))
+        except Exception:
+            pass
 
 
 def _data_only_action(key, again):
@@ -1132,6 +1171,8 @@ def _import_reference(exports, document, helper, exchange, placement, replace=No
 
 def _data_only_part(job, document, helper, exchange, hub_id, project_id, file_urn):
     """Part of a load job: a data-only exchange has no geometry, so read and keep its element data."""
+    if not helper_is_current((yield jobs.Background('Checking the helper', helper.health))):
+        raise fusion_ops.FusionOpError(data_only.MESSAGE + '\n\n' + OUTDATED_HELPER)
     try:
         data = yield jobs.Background('Data only, no geometry: reading its element data',
                                      lambda: helper.data_only_elements(hub_id, project_id, file_urn))
