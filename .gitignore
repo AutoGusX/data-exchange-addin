@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+tokens.json
+prefs.json
+*_prefs.json
+.env
+.venv/
+node_modules/
+bin/
+obj/
+dist/
+*.user
+.vs/

@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FusionDxHelper.Api/FusionDxHelper.Api.csproj" />
+    <Project Path="src/FusionDxHelper.AutodeskSdk/FusionDxHelper.AutodeskSdk.csproj" />
+    <Project Path="src/FusionDxHelper.Core/FusionDxHelper.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FusionDxHelper.Tests/FusionDxHelper.Tests.csproj" />
+  </Folder>
+</Solution>

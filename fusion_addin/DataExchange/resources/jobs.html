@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Exchange</title>
+<style>
+  :root { --bg:#ffffff; --fg:#3c3c3c; --muted:#808080; --line:#d9d9d9; --accent:#0696d7; --ok:#2e7d32; --err:#b3261e; --wait:#b26a00; --card:#f6f6f6; --hover:#eef4f9; }
+  body.dark { --bg:#2f2f2f; --fg:#e4e4e4; --muted:#9a9a9a; --line:#4a4a4a; --accent:#38abdf; --ok:#7bc67e; --err:#ff8a80; --wait:#ffb74d; --card:#383838; --hover:#3a444c; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:8px; background:var(--bg); color:var(--fg); font:12px "Artifakt Element","Segoe UI",Arial,sans-serif; }
+  h2 { font-size:12px; margin:0; }
+  .bar { display:flex; align-items:center; justify-content:space-between; gap:6px; margin:0 0 6px; }
+  .section { margin-bottom:14px; }
+  .hint { color:var(--muted); font-weight:normal; }
+  #checked { margin-bottom:4px; }
+  button { font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:2px; padding:2px 7px; cursor:pointer; white-space:nowrap; }
+  button:hover { border-color:var(--accent); }
+  button:disabled { color:var(--muted); cursor:default; border-color:var(--line); }
+  .empty { color:var(--muted); font-style:italic; }
+  .spin { display:inline-block; width:9px; height:9px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; vertical-align:middle; margin-right:4px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--line); margin-right:5px; vertical-align:middle; flex:none; }
+  .current .dot, .done .dot { background:var(--ok); }
+  .behind .dot, .diverged .dot, .waiting .dot { background:var(--wait); }
+  .error .dot, .failed .dot { background:var(--err); }
+
+  /* exchanges table */
+  .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:2px; }
+  table { border-collapse:collapse; width:100%; }
+  th { text-align:left; font-weight:600; color:var(--muted); font-size:11px; background:var(--card); border-bottom:1px solid var(--line); padding:4px 6px; white-space:nowrap; }
+  td { padding:4px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  td.name { min-width:140px; overflow-wrap:break-word; }
+  td.name .sub { color:var(--muted); font-size:11px; }
+  td.nowrap, td.status { white-space:nowrap; }
+  td.rev { font-family:Consolas,monospace; font-size:11px; white-space:nowrap; }
+  td.actions { white-space:nowrap; }
+  td.actions button { margin-right:4px; }
+  .current td.status { color:var(--ok); }
+  .behind td.status, .diverged td.status { color:var(--wait); }
+  .error td.status { color:var(--err); }
+  .unknown td.status { color:var(--muted); }
+  tr.noterow td { color:var(--wait); padding-top:0; font-size:11px; white-space:normal; }
+  tr.hasnote td { border-bottom:none; }
+  tr.elements td { background:var(--card); padding:6px; }
+  table.inner th, table.inner td { font-size:11px; padding:2px 6px; white-space:normal; overflow-wrap:anywhere; }
+  table.inner td.props { color:var(--muted); }
+
+  /* jobs: one line each, click to expand */
+  .jobs { border:1px solid var(--line); border-radius:2px; }
+  .job { border-bottom:1px solid var(--line); }
+  .job:last-child { border-bottom:none; }
+  .line { display:flex; align-items:center; gap:4px; padding:4px 6px; cursor:pointer; }
+  .line:hover { background:var(--hover); }
+  .twisty { flex:none; width:10px; color:var(--muted); font-size:9px; }
+  .line .title { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+  .line .state { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
+  .failed .line .state { color:var(--err); }
+  .done .line .state { color:var(--ok); }
+  .waiting .line .state { color:var(--wait); }
+  .line .time { flex:none; color:var(--muted); }
+  .more { padding:2px 8px 8px 25px; background:var(--card); }
+  .more .detail { color:var(--muted); overflow-wrap:anywhere; }
+  .more .result { margin-top:4px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .more button { margin-top:6px; margin-right:5px; }
+  .more .link { margin-top:4px; color:var(--muted); font-size:11px; overflow-wrap:anywhere; user-select:text; }
+</style>
+</head>
+<body>
+<div class="section">
+  <div class="bar"><h2 id="docTitle">Exchanges in this design</h2><button id="check">Check for updates</button></div>
+  <div id="checked" class="hint"></div>
+  <div id="summary"><div class="empty">Loading…</div></div>
+</div>
+<div class="section">
+  <div class="bar"><h2>Jobs <span id="jobCount" class="hint"></span></h2><button id="clear">Clear finished</button></div>
+  <div id="list"><div class="empty">No jobs yet. Load, Refresh and Publish run here while you keep working.</div></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var listEl = document.getElementById('list');
+  var summaryEl = document.getElementById('summary');
+  var expanded = {};     // job id -> true/false once the user has clicked that job
+  var lastJobs = { jobs: [] };
+
+  function send(action, data) {
+    try { return adsk.fusionSendData(action, JSON.stringify(data || {})); } catch (e) { return null; }
+  }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function when(iso) {
+    if (!iso) return '';
+    var date = new Date(iso);
+    if (isNaN(date.getTime())) return iso;
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function shortRevision(id) {
+    id = String(id || '');
+    return id.length > 14 ? id.slice(0, 8) + '…' + id.slice(-4) : id;
+  }
+
+  function copyText(text) {
+    var box = document.createElement('textarea');
+    box.value = text;
+    box.style.position = 'fixed';
+    box.style.opacity = '0';
+    document.body.appendChild(box);
+    box.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(box);
+    return ok;
+  }
+
+  function setTheme(dark) {
+    if (dark) document.body.classList.add('dark'); else document.body.classList.remove('dark');
+  }
+
+  // ---- exchanges table ---------------------------------------------------------------------
+
+  function exchangeRows(body, item, role, dateLabel, counts) {
+    var notes = (item.notes || []).slice();
+    if (item.latest && item.latest !== item.revision) notes.unshift('Latest revision in the cloud: ' + item.latest);
+    if (item.mock) notes.push('MOCK MODE: fixture data, not a real cloud exchange.');
+
+    var row = el('tr', item.state + (notes.length ? ' hasnote' : ''));
+    row.appendChild(el('td', 'nowrap', role));
+    var name = el('td', 'name');
+    name.appendChild(el('div', '', item.name));
+    if (item.location) name.appendChild(el('div', 'sub', item.location));
+    if (item.component) name.title = 'Reference component: ' + item.component + (item.placement === 'at-origin' ? ' (moved to origin)' : '');
+    row.appendChild(name);
+    var status = el('td', 'status');
+    status.appendChild(el('span', item.checking ? 'spin' : 'dot'));
+    status.appendChild(document.createTextNode(item.checking ? 'Checking…' : item.shortStatus));
+    status.title = item.statusText;
+    row.appendChild(status);
+    var revision = el('td', 'rev', shortRevision(item.revision));
+    revision.title = item.revision || '';
+    row.appendChild(revision);
+    var date = el('td', 'nowrap', when(item.at));
+    date.title = dateLabel;
+    row.appendChild(date);
+    row.appendChild(el('td', 'nowrap', counts));
+    var actions = el('td', 'actions');
+    if (item.canRefresh) {
+      var refresh = el('button', '', 'Refresh');
+      refresh.title = 'Update this reference to the latest revision.';
+      refresh.onclick = function () { send('refresh', { key: item.key }); };
+      actions.appendChild(refresh);
+    }
+    if (item.hasLink) {
+      var open = el('button', '', 'Open');
+      open.title = 'Open this exchange in Autodesk Forma in your browser.';
+      open.onclick = function () { send('openExchange', { key: item.linkKey }); };
+      actions.appendChild(open);
+    }
+    var elementsRow = null;
+    if (role === 'Consumed') {
+      var list = el('button', '', 'Elements');
+      list.title = 'Show what this exchange contains: element names, categories and properties.';
+      list.onclick = function () {
+        openElements[item.key] = !openElements[item.key];
+        if (openElements[item.key]) loadElements(item.key, elementsRow); else elementsRow.style.display = 'none';
+      };
+      actions.appendChild(list);
+    }
+    row.appendChild(actions);
+    body.appendChild(row);
+
+    if (role === 'Consumed') {
+      elementsRow = el('tr', 'elements');
+      elementsRow.style.display = 'none';
+      var holder = el('td');
+      holder.colSpan = 7;
+      elementsRow.appendChild(holder);
+      row.classList.add('hasnote');
+      body.appendChild(elementsRow);
+      if (openElements[item.key]) loadElements(item.key, elementsRow);
+    }
+    if (item.mesh) notes.push('Loaded as a mesh: this exchange has no solid geometry.');
+    if (notes.length) {
+      var noteRow = el('tr', 'noterow');
+      noteRow.appendChild(el('td'));
+      var cell = el('td', '', notes.join(' '));
+      cell.colSpan = 6;
+      noteRow.appendChild(cell);
+      body.appendChild(noteRow);
+    }
+  }
+
+  var openElements = {};   // exchange key -> true while its element list is shown
+
+  function showElements(packed, rowEl) {
+    var holder = rowEl.firstChild;
+    holder.innerHTML = '';
+    var listed = (packed && packed.listed) || [];
+    if (!listed.length) {
+      holder.appendChild(el('div', 'empty', packed && packed.missing
+        ? 'No element list is stored for this reference. Refresh or reload it to record one.'
+        : 'This exchange lists no elements.'));
+    } else {
+      var table = el('table', 'inner');
+      var head = el('tr');
+      ['Element', 'Category', 'Properties'].forEach(function (label) { head.appendChild(el('th', '', label)); });
+      table.appendChild(head);
+      listed.forEach(function (element) {
+        var line = el('tr');
+        line.appendChild(el('td', '', element.name));
+        line.appendChild(el('td', '', element.category));
+        var props = Object.keys(element.properties || {}).map(function (k) { return k + ': ' + element.properties[k]; });
+        line.appendChild(el('td', 'props', props.join('; ')));
+        table.appendChild(line);
+      });
+      holder.appendChild(table);
+      if (packed.total > listed.length) holder.appendChild(el('div', 'hint', 'Showing ' + listed.length + ' of ' + packed.total + ' elements.'));
+    }
+    rowEl.style.display = '';
+  }
+
+  function loadElements(key, rowEl) {
+    var reply = send('elements', { key: key });
+    var apply = function (text) { try { showElements(JSON.parse(text), rowEl); } catch (e) { /* leave it closed */ } };
+    if (reply && reply.then) reply.then(apply); else if (typeof reply === 'string') apply(reply);
+  }
+
+  var SHORT = { current: 'Up to date', behind: 'Update available', diverged: 'Newer in cloud', unknown: 'Not checked', error: 'Check failed' };
+
+  function renderSummary(state) {
+    setTheme(state.dark);
+    document.getElementById('docTitle').textContent = state.document ? 'Exchanges in ' + state.document : 'Exchanges in this design';
+    document.getElementById('check').disabled = !!state.checking || !state.document;
+    document.getElementById('checked').textContent = state.checking ? '' : (state.checkedAt ? 'Checked against the cloud ' + when(state.checkedAt) : '');
+    summaryEl.innerHTML = '';
+    if (!state.document) {
+      summaryEl.appendChild(el('div', 'empty', 'Open a design to see its exchanges.'));
+      return;
+    }
+    if (!state.consumed.length && !state.published) {
+      summaryEl.appendChild(el('div', 'empty', 'This design does not consume or publish any exchange yet.'));
+      return;
+    }
+    var scroll = el('div', 'scroll');
+    var table = el('table');
+    var head = el('tr');
+    ['Type', 'Exchange', 'Status', 'Revision', 'Date', 'Content', ''].forEach(function (label) { head.appendChild(el('th', '', label)); });
+    var thead = el('thead');
+    thead.appendChild(head);
+    table.appendChild(thead);
+    var body = el('tbody');
+    state.consumed.forEach(function (item) {
+      item.shortStatus = SHORT[item.state] || item.statusText;
+      exchangeRows(body, item, 'Consumed', 'When this revision was loaded', item.elements + ' elements, ' + item.bodies + ' bodies');
+    });
+    if (state.published) {
+      state.published.shortStatus = state.published.state === 'current' ? 'As published' : (SHORT[state.published.state] || state.published.statusText);
+      exchangeRows(body, state.published, 'Published', 'When this design was last published', state.published.content || '');
+    }
+    table.appendChild(body);
+    scroll.appendChild(table);
+    summaryEl.appendChild(scroll);
+  }
+
+  // ---- jobs --------------------------------------------------------------------------------
+
+  function isOpen(job) {
+    if (expanded.hasOwnProperty(job.id)) return expanded[job.id];
+    return job.state === 'failed' || job.state === 'waiting';   // these need attention, so they start open
+  }
+
+  function renderJobs(state) {
+    lastJobs = state;
+    setTheme(state.dark);
+    var jobs = state.jobs || [];
+    var active = jobs.filter(function (j) { return j.state === 'running' || j.state === 'waiting'; }).length;
+    document.getElementById('jobCount').textContent = active ? '(' + active + ' in progress)' : '';
+    listEl.innerHTML = '';
+    if (!jobs.length) {
+      listEl.appendChild(el('div', 'empty', 'No jobs yet. Load, Refresh and Publish run here while you keep working.'));
+      return;
+    }
+    var box = el('div', 'jobs');
+    jobs.forEach(function (job) {
+      var open = isOpen(job);
+      var card = el('div', 'job ' + job.state);
+      var line = el('div', 'line');
+      line.title = open ? 'Hide details' : 'Show details';
+      line.appendChild(el('span', 'twisty', open ? '▼' : '▶'));
+      line.appendChild(el('span', job.state === 'running' ? 'spin' : 'dot'));
+      line.appendChild(el('span', 'title', job.title));
+      line.appendChild(el('span', 'state', job.message));
+      if (job.state === 'done' || job.state === 'failed') line.appendChild(el('span', 'time', job.seconds + ' s'));
+      line.onclick = function () { expanded[job.id] = !open; renderJobs(lastJobs); };
+      card.appendChild(line);
+
+      if (open) {
+        var more = el('div', 'more');
+        if (job.detail) more.appendChild(el('div', 'detail', 'Design: ' + job.detail));
+        if (job.state === 'running' || job.state === 'waiting') more.appendChild(el('div', 'result', job.message));
+        if (job.result) more.appendChild(el('div', 'result', job.result));
+        if (job.state === 'waiting' && job.canContinue) {
+          var go = el('button', '', 'Continue now');
+          go.title = 'Run this step now, even though another command looks active.';
+          go.onclick = function () { send('continue', { id: job.id }); };
+          more.appendChild(go);
+        }
+        if (job.link) {
+          var openLink = el('button', '', 'Open in Autodesk Forma');
+          openLink.title = 'Open this exchange in Autodesk Forma (ACC) in your browser.';
+          openLink.onclick = function () { send('open', { id: job.id }); };
+          more.appendChild(openLink);
+          var copy = el('button', '', 'Copy link');
+          copy.onclick = function () { copy.textContent = copyText(job.link) ? 'Copied' : 'Select the link below'; };
+          more.appendChild(copy);
+          more.appendChild(el('div', 'link', job.link));
+        }
+        card.appendChild(more);
+      }
+      box.appendChild(card);
+    });
+    listEl.appendChild(box);
+  }
+
+  window.fusionJavaScriptHandler = {
+    handle: function (action, data) {
+      try {
+        if (action === 'jobs') renderJobs(JSON.parse(data));
+        else if (action === 'summary') renderSummary(JSON.parse(data));
+      } catch (e) { /* ignore a bad message */ }
+      return 'OK';
+    }
+  };
+
+  document.getElementById('clear').addEventListener('click', function () { send('clear', {}); });
+  document.getElementById('check').addEventListener('click', function () { send('check', {}); });
+
+  function start() {
+    if (!(window.adsk && adsk.fusionSendData)) { setTimeout(start, 100); return; }
+    send('ready', {});
+  }
+  start();
+})();
+</script>
+</body>
+</html>

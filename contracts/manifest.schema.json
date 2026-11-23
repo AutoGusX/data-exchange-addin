@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "title": "Data Exchange helper export manifest",
+  "description": "Written by the helper next to the exported geometry. Internal contract between helper and add-in, not an Autodesk schema.",
+  "type": "object",
+  "required": ["schemaVersion", "exchangeId", "collectionId", "hubId", "revisionId", "source", "elements", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "exchangeId": { "type": "string", "minLength": 1 },
+    "collectionId": { "type": "string", "minLength": 1 },
+    "hubId": { "type": "string", "minLength": 1 },
+    "revisionId": { "type": "string", "minLength": 1 },
+    "exchangeName": { "type": ["string", "null"] },
+    "sourceApplication": { "type": ["string", "null"] },
+    "units": { "type": ["string", "null"], "description": "Null when the geometry file carries its own units (STEP does)." },
+    "coordinateSystem": { "type": ["string", "null"] },
+    "exchangeGeometry": { "anyOf": [{ "$ref": "#/$defs/geometry" }, { "type": "null" }] },
+    "source": { "enum": ["sdk", "mock"], "description": "mock = fixture data, never a real cloud exchange." },
+    "exportedAtUtc": { "type": "string", "format": "date-time" },
+    "elements": { "type": "array", "items": { "$ref": "#/$defs/element" } },
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/warning" } }
+  },
+  "$defs": {
+    "geometry": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["step", "mesh"] },
+        "blobRef": { "type": ["string", "null"], "description": "Path relative to the manifest folder. Must stay inside it." }
+      }
+    },
+    "element": {
+      "type": "object",
+      "required": ["sourceElementId", "hasGeometry"],
+      "properties": {
+        "sourceElementId": { "type": "string", "minLength": 1 },
+        "uniqueId": { "type": ["string", "null"] },
+        "displayName": { "type": ["string", "null"] },
+        "category": { "type": ["string", "null"] },
+        "hasGeometry": { "type": "boolean" },
+        "transform": {
+          "description": "4x4, row-major, translation at indices 3, 7 and 11. Null when unknown.",
+          "anyOf": [{ "type": "array", "items": { "type": "number" }, "minItems": 16, "maxItems": 16 }, { "type": "null" }]
+        },
+        "geometry": { "anyOf": [{ "$ref": "#/$defs/geometry" }, { "type": "null" }] },
+        "properties": { "type": ["object", "null"], "additionalProperties": { "type": "string" } }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "sourceElementId": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

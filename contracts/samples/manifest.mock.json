@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "exchangeId": "mock-exchange-building-core",
+  "collectionId": "mock-collection",
+  "hubId": "mock-hub",
+  "revisionId": "mock-rev-1",
+  "exchangeName": "Building Core (mock)",
+  "sourceApplication": "Mock",
+  "units": null,
+  "coordinateSystem": "STEP file units and origin; Z up",
+  "exchangeGeometry": {
+    "kind": "step",
+    "blobRef": "geometry/exchange.step"
+  },
+  "elements": [
+    {
+      "sourceElementId": "mock-wall-1",
+      "uniqueId": "mock-wall-1",
+      "displayName": "Basic Wall",
+      "category": "Walls",
+      "hasGeometry": true,
+      "transform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "geometry": null,
+      "properties": {
+        "sourceCategory": "Walls"
+      }
+    },
+    {
+      "sourceElementId": "mock-floor-1",
+      "uniqueId": "mock-floor-1",
+      "displayName": "Floor Slab",
+      "category": "Floors",
+      "hasGeometry": true,
+      "transform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "geometry": null,
+      "properties": {
+        "sourceCategory": "Floors"
+      }
+    },
+    {
+      "sourceElementId": "mock-column-1",
+      "uniqueId": "mock-column-1",
+      "displayName": "Structural Column",
+      "category": "Structural Columns",
+      "hasGeometry": true,
+      "transform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "geometry": null,
+      "properties": {
+        "sourceCategory": "Structural Columns"
+      }
+    },
+    {
+      "sourceElementId": "mock-column-2",
+      "uniqueId": "mock-column-2",
+      "displayName": "Structural Column",
+      "category": "Structural Columns",
+      "hasGeometry": true,
+      "transform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "geometry": null,
+      "properties": {
+        "sourceCategory": "Structural Columns"
+      }
+    },
+    {
+      "sourceElementId": "mock-beam-1",
+      "uniqueId": "mock-beam-1",
+      "displayName": "Beam",
+      "category": "Structural Framing",
+      "hasGeometry": true,
+      "transform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "geometry": null,
+      "properties": {
+        "sourceCategory": "Structural Framing"
+      }
+    },
+    {
+      "sourceElementId": "mock-brace-1",
+      "uniqueId": "mock-brace-1",
+      "displayName": "Brace",
+      "category": "Structural Framing",
+      "hasGeometry": true,
+      "transform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "geometry": null,
+      "properties": {
+        "sourceCategory": "Structural Framing"
+      }
+    }
+  ],
+  "warnings": [],
+  "source": "mock",
+  "exportedAtUtc": "2026-11-16T15:20:06.9591526Z"
+}

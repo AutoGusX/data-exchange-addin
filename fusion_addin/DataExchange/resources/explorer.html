@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Exchange explorer</title>
+<style>
+  :root { --bg:#ffffff; --fg:#3c3c3c; --muted:#808080; --line:#d9d9d9; --hover:#eef4f9; --sel:#cde5f8; --accent:#0696d7; --err:#b3261e; }
+  body.dark { --bg:#2f2f2f; --fg:#e4e4e4; --muted:#9a9a9a; --line:#4a4a4a; --hover:#3a444c; --sel:#1f5b80; --accent:#38abdf; --err:#ff8a80; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:12px "Artifakt Element","Segoe UI",Arial,sans-serif; display:flex; flex-direction:column; border:1px solid var(--line); }
+  #bar { display:flex; gap:4px; padding:4px; border-bottom:1px solid var(--line); flex:none; }
+  #filter { flex:1; min-width:0; padding:3px 6px; font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:2px; }
+  #filter:focus { outline:none; border-color:var(--accent); }
+  #reload { flex:none; width:26px; font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:2px; cursor:pointer; }
+  #reload:hover { background:var(--hover); }
+  #tree { flex:1; overflow:auto; padding:2px 0; min-height:0; }
+  ul { list-style:none; margin:0; padding:0; }
+  .row { display:flex; align-items:center; height:22px; white-space:nowrap; cursor:default; padding-right:6px; }
+  .row:hover { background:var(--hover); }
+  .row.selected { background:var(--sel); }
+  .twisty { flex:none; width:16px; text-align:center; color:var(--muted); font-size:9px; cursor:pointer; }
+  .icon { flex:none; width:16px; height:16px; margin-right:5px; }
+  .name { overflow:hidden; text-overflow:ellipsis; }
+  .row.readonly .name { color:var(--muted); }
+  .tag { margin-left:6px; color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; }
+  .tag.warn, #previewNote.warn { color:#c77700; }
+  .star { flex:none; margin-left:auto; padding:0 2px 0 8px; color:var(--muted); cursor:pointer; visibility:hidden; font-size:13px; }
+  .row:hover .star, .star.on { visibility:visible; }
+  .star.on { color:#e0a526; }
+  .trash { flex:none; margin-left:auto; padding:0 2px 0 8px; color:var(--muted); cursor:pointer; visibility:hidden; }
+  .row:hover .trash { visibility:visible; }
+  .trash:hover { color:var(--err); }
+  .row.deleting .name { color:var(--muted); text-decoration:line-through; }
+  .heading { padding:5px 8px 2px; color:var(--muted); font-size:11px; font-weight:600; }
+  .heading a { color:var(--accent); cursor:pointer; margin-left:8px; font-weight:normal; }
+  .note { height:22px; line-height:22px; color:var(--muted); font-style:italic; white-space:nowrap; }
+  .note.error { color:var(--err); font-style:normal; cursor:pointer; }
+  .hidden { display:none; }
+  .spin { display:inline-block; width:9px; height:9px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; vertical-align:middle; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #preview { flex:none; border-top:1px solid var(--line); padding:6px; text-align:center; }
+  #preview img { max-width:100%; max-height:170px; display:block; margin:0 auto; }
+  #previewNote { color:var(--muted); padding:4px 0; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <input id="filter" type="text" placeholder="Filter, or press Enter to search inside the selected location" autocomplete="off" spellcheck="false">
+  <button id="reload" title="Reload the selected location">&#8635;</button>
+</div>
+<div id="tree"><div class="note" style="padding-left:8px"><span class="spin"></span> Loading hubs…</div></div>
+<div id="preview" class="hidden"><img id="previewImage" alt="Exchange preview"><div id="previewNote"></div></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var ICONS = {
+    hub: '<svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2 8h12M8 2c2.2 2 2.2 10 0 12M8 2c-2.2 2-2.2 10 0 12" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>',
+    project: '<svg class="icon" viewBox="0 0 16 16"><rect x="2" y="4.5" width="12" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 4.5V3h4v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+    folder: '<svg class="icon" viewBox="0 0 16 16"><path d="M1.5 4a1 1 0 0 1 1-1h3.2l1.5 1.6h6.3a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill="#e8b84a" stroke="#b98a1e" stroke-width=".8"/></svg>',
+    exchange: '<svg class="icon" viewBox="0 0 16 16"><path d="M3 5.5h8.5M9 3l2.7 2.5L9 8M13 10.5H4.5M7 8l-2.7 2.5L7 13" fill="none" stroke="#0696d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  };
+
+  var config = { showExchanges: true };
+  var nodes = {};
+  var counter = 0;
+  var selectedId = null;
+  var root = { id: 'root', kind: 'root', name: '', parent: null, data: {}, children: [], loaded: false, loading: true, expanded: true };
+  nodes.root = root;
+  // Favorite folders sit in their own list above the hubs. Each one carries its hub and project.
+  var favRoot = { id: 'favroot', kind: 'favroot', name: '', parent: null, data: {}, children: [], loaded: true, loading: false, expanded: true };
+  nodes.favroot = favRoot;
+  var favorites = [];
+
+  var treeEl = document.getElementById('tree');
+  var filterEl = document.getElementById('filter');
+
+  function send(action, data) {
+    try { return adsk.fusionSendData(action, JSON.stringify(data || {})); }
+    catch (e) { return null; }
+  }
+
+  function isLeaf(node) { return node.kind === 'exchange'; }
+  // Exchanges already seen to be AEC Data Model based: data only, nothing to load.
+  function isDataOnly(node) {
+    return node && node.kind === 'exchange' && (config.dataOnly || []).indexOf(node.data.fileUrn) >= 0;
+  }
+  function dataOnlyNote() { return config.dataOnlyNote || 'Data only, no geometry.'; }
+
+  // The folder a node sits in is its nearest folder ancestor (or itself); names list the whole route.
+  function describe(node) {
+    var names = [], folder = null, hub = null, project = null, exchange = null;
+    for (var n = node; n && n.kind !== 'root' && n.kind !== 'favroot' && n.kind !== 'searchroot'; n = n.parent) {
+      if (n.kind === 'exchange') exchange = n.data;
+      if (n.kind === 'folder' && !folder) folder = n.data;
+      if (n.ctx) {  // a favorite or a search result knows the rest of its route
+        names = n.ctx.path.concat(names);
+        hub = n.ctx.hub;
+        project = n.ctx.project;
+        if (!folder) folder = n.ctx.folder;
+        break;
+      }
+      names.unshift(n.name);
+      if (n.kind === 'project') project = n.data;
+      if (n.kind === 'hub') hub = n.data;
+    }
+    return { kind: node.kind, path: names, hub: hub, project: project, folder: folder, exchange: exchange };
+  }
+
+  function favoriteKey(projectId, folderId) { return projectId + '|' + folderId; }
+
+  function isFavorite(node) {
+    var d = describe(node);
+    if (!(d.project && d.folder)) return false;
+    var key = favoriteKey(d.project.projectId, d.folder.folderId);
+    return favorites.some(function (f) { return favoriteKey(f.project.projectId, f.folder.folderId) === key; });
+  }
+
+  function applyFavorites(list) {
+    favorites = Array.isArray(list) ? list : [];
+    var previous = {};
+    favRoot.children.forEach(function (c) { previous[c.key] = c; });
+    favRoot.children = favorites.map(function (f) {
+      var key = favoriteKey(f.project.projectId, f.folder.folderId);
+      var kept = previous[key];
+      var ctx = { hub: f.hub, project: f.project, path: f.path, folder: f.folder };
+      if (kept) { kept.fav = f; kept.ctx = ctx; kept.data = f.folder; kept.name = f.folder.name; return kept; }
+      var child = { id: 'f' + (++counter), key: key, kind: 'folder', name: f.folder.name, parent: favRoot,
+                    data: f.folder, fav: f, ctx: ctx, children: [], loaded: false, loading: false, expanded: false };
+      nodes[child.id] = child;
+      return child;
+    });
+    render();
+  }
+
+  // Search: Enter in the filter box looks through every folder under the selected location.
+  var searchRoot = { id: 'searchroot', kind: 'searchroot', name: '', parent: null, data: {}, children: [], loaded: true, loading: false, expanded: true };
+  nodes.searchroot = searchRoot;
+  var search = null;
+
+  function startSearch() {
+    var text = filterEl.value.trim();
+    if (!text) return;
+    var node = nodes[selectedId];
+    if (node && isLeaf(node)) node = node.parent;
+    var where = node ? describe(node) : null;
+    if (!(where && where.hub && where.project)) {
+      search = { text: text, where: '', error: 'select a project or folder first, then press Enter' };
+      searchRoot.children = [];
+      render();
+      return;
+    }
+    search = { text: text, where: where.path[where.path.length - 1] || 'the project', busy: true };
+    searchRoot.children = [];
+    send('search', { text: text, hub: where.hub, project: where.project, folder: where.folder, path: where.path });
+    render();
+  }
+
+  function onSearchResults(message) {
+    if (!search || message.text !== search.text) return;
+    search.busy = false;
+    search.error = message.error || null;
+    search.folders = message.folders || 0;
+    search.truncated = !!message.truncated;
+    searchRoot.children = (message.items || []).map(function (item) {
+      var child = { id: 's' + (++counter), key: item.id, kind: item.kind, name: item.name, parent: searchRoot,
+                    data: item.data, ctx: item.ctx, children: [], loaded: false, loading: false, expanded: false };
+      nodes[child.id] = child;
+      return child;
+    });
+    render();
+  }
+
+  function setFavorite(node, on) {
+    var reply = send('favorite', { on: on, location: describe(node) });
+    var apply = function (text) { try { applyFavorites(JSON.parse(text)); } catch (e) { /* keep the list */ } };
+    if (reply && reply.then) reply.then(apply); else if (typeof reply === 'string') apply(reply);
+  }
+
+  function request(node) {
+    node.loading = true; node.error = null;
+    var d = describe(node);
+    send('expand', {
+      nodeId: node.id, kind: node.kind,
+      hubId: d.hub && d.hub.hubId, projectId: d.project && d.project.projectId,
+      folderId: d.folder && d.folder.folderId
+    });
+  }
+
+  function toggle(node, open) {
+    if (isLeaf(node)) return;
+    node.expanded = open === undefined ? !node.expanded : open;
+    if (node.expanded && !node.loaded && !node.loading) request(node);
+    render();
+  }
+
+  function select(node) {
+    selectedId = node.id;
+    var preview = document.getElementById('preview');
+    if (node.kind === 'exchange' && config.showExchanges) {
+      preview.classList.remove('hidden');
+      document.getElementById('previewImage').classList.add('hidden');
+      var note = document.getElementById('previewNote');
+      note.classList.toggle('warn', isDataOnly(node));
+      if (isDataOnly(node)) note.textContent = dataOnlyNote();
+      else note.innerHTML = '<span class="spin"></span> Loading preview…';
+    } else {
+      preview.classList.add('hidden');
+    }
+    send('select', describe(node));
+    if (!isLeaf(node) && !node.expanded) toggle(node, true); else render();
+  }
+
+  function matches(node, text) {
+    if (!text) return true;
+    if (node.name.toLowerCase().indexOf(text) >= 0) return true;
+    return node.children.some(function (c) { return matches(c, text); });
+  }
+
+  function note(text, depth, cls, onclick) {
+    var li = document.createElement('li');
+    li.className = 'note' + (cls ? ' ' + cls : '');
+    li.style.paddingLeft = (depth * 14 + 22) + 'px';
+    li.innerHTML = text;
+    if (onclick) li.onclick = onclick;
+    return li;
+  }
+
+  function renderChildren(node, depth, text, parentMatched) {
+    var ul = document.createElement('ul');
+    if (node.loading) { ul.appendChild(note('<span class="spin"></span> Loading…', depth)); return ul; }
+    if (node.error) {
+      ul.appendChild(note(escapeHtml(node.error) + ' Click to retry.', depth, 'error', function () { request(node); render(); }));
+      return ul;
+    }
+    var shown = 0;
+    node.children.forEach(function (child) {
+      var own = !text || child.name.toLowerCase().indexOf(text) >= 0;
+      if (!(parentMatched || matches(child, text))) return;
+      shown++;
+      var li = document.createElement('li');
+      var row = document.createElement('div');
+      row.className = 'row' + (child.id === selectedId ? ' selected' : '') + (child.data.readOnly && !config.showExchanges ? ' readonly' : '');
+      row.style.paddingLeft = (depth * 14 + 4) + 'px';
+      row.title = child.fav ? child.fav.path.join(' / ') : child.name;
+      var twisty = document.createElement('span');
+      twisty.className = 'twisty';
+      twisty.innerHTML = isLeaf(child) ? '' : (child.loading ? '<span class="spin"></span>' : (child.expanded ? '&#9660;' : '&#9654;'));
+      twisty.onclick = function (e) { e.stopPropagation(); toggle(child); };
+      row.appendChild(twisty);
+      row.insertAdjacentHTML('beforeend', ICONS[child.kind] || '');
+      var name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = child.name;
+      row.appendChild(name);
+      if (child.data.readOnly && !config.showExchanges) row.insertAdjacentHTML('beforeend', '<span class="tag">read-only</span>');
+      if (isDataOnly(child) && config.showExchanges) {
+        row.insertAdjacentHTML('beforeend', '<span class="tag warn">data only, no geometry</span>');
+        row.title = dataOnlyNote();
+      }
+      if (child.ctx && !child.fav) {
+        var route = document.createElement('span');
+        route.className = 'tag';
+        route.textContent = child.ctx.path.slice(0, -1).slice(-2).join(' / ');
+        row.title = child.ctx.path.join(' / ');
+        row.appendChild(route);
+      }
+      if (child.fav) {
+        var where = document.createElement('span');
+        where.className = 'tag';
+        where.textContent = child.fav.project.name;
+        row.appendChild(where);
+      }
+      if (child.kind === 'exchange' && config.showExchanges) {
+        if (child.deleting) row.className += ' deleting';
+        var trash = document.createElement('span');
+        trash.className = 'trash';
+        trash.innerHTML = '&#128465;';
+        trash.title = 'Delete this exchange (asks first)';
+        trash.onclick = function (e) { e.stopPropagation(); if (!child.deleting) send('delete', describe(child)); };
+        row.appendChild(trash);
+      }
+      if (child.kind === 'folder') {
+        var starred = isFavorite(child);
+        var star = document.createElement('span');
+        star.className = 'star' + (starred ? ' on' : '');
+        star.innerHTML = starred ? '&#9733;' : '&#9734;';
+        star.title = starred ? 'Remove from favorites' : 'Add to favorites';
+        star.onclick = function (e) { e.stopPropagation(); setFavorite(child, !starred); };
+        star.ondblclick = function (e) { e.stopPropagation(); };
+        row.appendChild(star);
+      }
+      row.onclick = function () { select(child); };
+      row.ondblclick = function () { toggle(child); };
+      li.appendChild(row);
+      if (!isLeaf(child) && child.expanded) li.appendChild(renderChildren(child, depth + 1, text, parentMatched || (own && !!text)));
+      ul.appendChild(li);
+    });
+    if (!shown) {
+      var empty = node.kind === 'root' ? 'No hubs available.' :
+        node.kind === 'hub' ? 'No projects.' :
+        (config.showExchanges && node.kind === 'folder') ? 'No subfolders or exchanges here.' : 'No subfolders.';
+      ul.appendChild(note(node.children.length ? 'Nothing matches the filter.' : empty, depth));
+    }
+    return ul;
+  }
+
+  function render() {
+    var scroll = treeEl.scrollTop;
+    var text = filterEl.value.trim().toLowerCase();
+    treeEl.innerHTML = '';
+    if (search) {
+      var searchHeading = document.createElement('div');
+      searchHeading.className = 'heading';
+      searchHeading.textContent = search.busy ? 'Searching for "' + search.text + '" in ' + search.where + '…'
+        : search.error ? 'Search failed: ' + search.error
+        : searchRoot.children.length + ' found for "' + search.text + '" in ' + search.where +
+          ' (' + search.folders + ' folders searched' + (search.truncated ? ', stopped early' : '') + ')';
+      var close = document.createElement('a');
+      close.textContent = 'Close';
+      close.onclick = function () { search = null; searchRoot.children = []; send('searchCancel', {}); render(); };
+      searchHeading.appendChild(close);
+      treeEl.appendChild(searchHeading);
+      if (!search.busy && !search.error && searchRoot.children.length) treeEl.appendChild(renderChildren(searchRoot, 0, '', false));
+    }
+    if (favRoot.children.length) {
+      var favHeading = document.createElement('div');
+      favHeading.className = 'heading';
+      favHeading.textContent = 'Favorites';
+      treeEl.appendChild(favHeading);
+      treeEl.appendChild(renderChildren(favRoot, 0, text, false));
+      var allHeading = document.createElement('div');
+      allHeading.className = 'heading';
+      allHeading.textContent = 'All locations';
+      treeEl.appendChild(allHeading);
+    }
+    treeEl.appendChild(renderChildren(root, 0, text, false));
+    treeEl.scrollTop = scroll;
+  }
+
+  function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+  }
+
+  function onChildren(message) {
+    var node = nodes[message.nodeId];
+    if (!node) return;
+    node.loading = false;
+    if (message.error) { node.error = message.error; node.loaded = false; render(); return; }
+    // Keep already-loaded children (and their expansion) when a location is reloaded.
+    var previous = {};
+    node.children.forEach(function (c) { previous[c.kind + ':' + c.key] = c; });
+    node.children = (message.items || []).map(function (item) {
+      var kept = previous[item.kind + ':' + item.id];
+      if (kept) { kept.name = item.name; kept.data = item.data; return kept; }
+      var child = { id: 'n' + (++counter), key: item.id, kind: item.kind, name: item.name, parent: node,
+                    data: item.data, children: [], loaded: false, loading: false, expanded: false };
+      nodes[child.id] = child;
+      return child;
+    });
+    node.loaded = true;
+    render();
+    // One hub or one project: open it straight away.
+    if (node.children.length === 1 && (node.kind === 'root' || node.kind === 'hub') && !node.children[0].expanded) {
+      toggle(node.children[0], true);
+    }
+  }
+
+  // An exchange was deleted (or the attempt failed): drop it everywhere it is listed.
+  function onDeleted(message) {
+    if (message.error) return;
+    Object.keys(nodes).forEach(function (id) {
+      var node = nodes[id];
+      if (node.kind !== 'exchange' || node.data.fileUrn !== message.fileUrn || !node.parent) return;
+      node.parent.children = node.parent.children.filter(function (c) { return c !== node; });
+      if (selectedId === id) { selectedId = null; document.getElementById('preview').classList.add('hidden'); }
+      delete nodes[id];
+    });
+    render();
+  }
+
+  function onPreview(message) {
+    var node = nodes[selectedId];
+    if (!node || node.kind !== 'exchange' || node.data.fileUrn !== message.fileUrn) return;
+    var image = document.getElementById('previewImage');
+    var text = document.getElementById('previewNote');
+    if (isDataOnly(node)) return;   // the data-only note stays in place of a preview
+    if (message.dataUrl) {
+      image.src = message.dataUrl;
+      image.classList.remove('hidden');
+      text.textContent = '';
+    } else {
+      image.classList.add('hidden');
+      text.textContent = 'No preview available for this exchange.';
+    }
+  }
+
+  window.fusionJavaScriptHandler = {
+    handle: function (action, data) {
+      try {
+        var message = data ? JSON.parse(data) : {};
+        if (action === 'children') onChildren(message);
+        else if (action === 'preview') onPreview(message);
+        else if (action === 'deleted') onDeleted(message);
+        else if (action === 'searchResults') onSearchResults(message);
+      } catch (e) { /* a bad message must not break the explorer */ }
+      return 'OK';
+    }
+  };
+
+  filterEl.addEventListener('input', render);
+  filterEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); startSearch(); } });
+  document.getElementById('reload').addEventListener('click', function () {
+    var node = nodes[selectedId] || root;
+    if (isLeaf(node)) node = node.parent;
+    node.expanded = true;
+    request(node);
+    render();
+  });
+
+  function start() {
+    if (!(window.adsk && adsk.fusionSendData)) { setTimeout(start, 100); return; }
+    var reply = send('ready', {});
+    var apply = function (text) {
+      try { config = JSON.parse(text) || config; } catch (e) { /* keep defaults */ }
+      if (config.dark) document.body.classList.add('dark');
+      applyFavorites(config.favorites);
+    };
+    if (reply && reply.then) reply.then(apply); else if (typeof reply === 'string') apply(reply);
+  }
+  start();
+})();
+</script>
+</body>
+</html>

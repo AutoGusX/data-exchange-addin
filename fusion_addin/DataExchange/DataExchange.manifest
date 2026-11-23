@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "addin",
+  "id": "b6a41940-5336-4bba-b018-c04082d79e4e",
+  "author": "Gus Quade",
+  "description": {
+    "": "Load, refresh and publish Autodesk Data Exchanges from Fusion."
+  },
+  "version": "0.2.0",
+  "runOnStartup": false,
+  "supportedOS": "windows",
+  "editEnabled": true
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "errors.schema.json",
+  "title": "Data Exchange helper error body",
+  "type": "object",
+  "required": ["code", "message", "correlationId"],
+  "properties": {
+    "code": {
+      "enum": [
+        "UNAUTHORIZED",
+        "AUTH_REQUIRED",
+        "FORBIDDEN",
+        "NOT_FOUND",
+        "INVALID_REQUEST",
+        "NOT_CONFIGURED",
+        "SDK_UNAVAILABLE",
+        "UNSUPPORTED_GEOMETRY",
+        "DATA_ONLY_EXCHANGE",
+        "NETWORK_ERROR",
+        "INTERNAL_ERROR"
+      ],
+      "description": "UNAUTHORIZED = wrong or missing helper secret (HTTP 401). AUTH_REQUIRED = no Autodesk sign-in (401). FORBIDDEN 403. NOT_FOUND 404. INVALID_REQUEST 400. NOT_CONFIGURED 409 (no client ID). UNSUPPORTED_GEOMETRY 422. DATA_ONLY_EXCHANGE 422 (AEC Data Model based exchange: data only, no geometry). NETWORK_ERROR and SDK_UNAVAILABLE 503. INTERNAL_ERROR 500."
+    },
+    "message": { "type": "string", "description": "Safe to show to the user. Never holds tokens or model data." },
+    "correlationId": { "type": "string", "description": "Matches a line in the helper log." }
+  }
+}
